@@ -1,129 +1,267 @@
-use std::{fmt::Display, fs::File, os::unix::process::CommandExt, process::Stdio, str::FromStr};
+use std::{
+    collections::{HashMap, HashSet},
+    fs::File,
+    io::{BufRead, BufReader, Read},
+    os::{
+        fd::{FromRawFd, IntoRawFd},
+        unix::process::CommandExt,
+    },
+    path::{Path, PathBuf},
+    process::Stdio,
+    str::FromStr,
+    thread::sleep,
+    time::{Duration, Instant},
+};
 
-use anyhow::bail;
+use anyhow::{anyhow, bail, Context};
 use clap::{command, Parser};
+use lazy_static::lazy_static;
+use libc::{daemon, is_process_running, terminate, Fork};
+use serde::{Deserialize, Serialize};
 
-fn log(log_args: LogArgs) -> Result<(), anyhow::Error> {
-    todo!("Log output here");
+pub mod libc;
 
-    Ok(())
+const CONFIG_FILE: &str = ".worker.toml";
+
+lazy_static! {
+    static ref STATE_DIR: PathBuf = CONFIG_DIR.join(".worker/state");
+    static ref LOG_DIR: PathBuf = CONFIG_DIR.join(".worker/log");
+    static ref CONFIG_DIR: PathBuf = find_config_file()
+        .expect("Couldn't get current dir")
+        .expect("Couldn't find config dir");
 }
 
-pub enum Fork {
-    Parent(libc::pid_t),
-    Child,
-}
+// TODO: Should not read the entire file. Should only read last x lines or something
+fn log(log_args: LogsArgs) -> Result<(), anyhow::Error> {
+    let log_file = LOG_DIR.join(log_args.project.name);
+    let file = File::open(log_file)?;
 
-fn fork() -> Result<Fork, i32> {
-    let res = unsafe { libc::fork() };
-    match res {
-        -1 => Err(-1),
-        0 => Ok(Fork::Child),
-        res => Ok(Fork::Parent(res)),
-    }
-}
+    let mut reader = BufReader::new(file);
+    let mut buffer = String::new();
 
-pub fn setsid() -> Result<libc::pid_t, i32> {
-    let res = unsafe { libc::setsid() };
-    match res {
-        -1 => Err(-1),
-        res => Ok(res),
-    }
-}
-
-fn daemon() -> Result<Fork, i32> {
-    match fork() {
-        Ok(Fork::Child) => setsid().and_then(|_| fork()),
-        x => x,
-    }
-}
-
-// Sends SIGTERM process to `pid`, terminating the entire process tree
-fn kill(pid: i32) -> Result<(), anyhow::Error> {
-    let result = unsafe { libc::kill(pid, libc::SIGTERM) };
-    if result == 0 {
-        Ok(())
+    if log_args.follow {
+        loop {
+            match reader.read_line(&mut buffer) {
+                Ok(0) => {
+                    // No new data, so wait before trying again
+                    sleep(Duration::from_secs(1));
+                }
+                Ok(_) => {
+                    print!("{}", buffer);
+                    buffer.clear(); // Clear the buffer after printing
+                }
+                Err(e) => {
+                    eprintln!("Error reading from file: {}", e);
+                    bail!(e)
+                }
+            }
+        }
     } else {
-        bail!("Got an error")
+        reader.read_to_string(&mut buffer)?;
+        println!("{}", buffer);
     }
+
+    Ok(())
 }
 
-fn run(args: RunArgs) -> Result<(), anyhow::Error> {
-    match daemon().unwrap() {
-        Fork::Parent(p) => {
-            // TODO: Store the two pids in a structured file. Can read it to be able to `worker stop <project>`
-            println!("pid is: {:?}", p);
+fn parse_state_filename(path: &Path) -> anyhow::Result<(String, i32)> {
+    let (name, pid) = path
+        .file_name()
+        .context("No filename")?
+        .to_str()
+        .context("Invalid unicode filename")?
+        .split_once('-')
+        .context("File doesn't contain -")?;
+
+    let pid = pid.parse::<i32>().context("Couldn't parse pid to i32")?;
+    Ok((name.to_string(), pid))
+}
+
+fn status() -> Result<(), anyhow::Error> {
+    let mut set: HashSet<String> = HashSet::new();
+
+    for entry in std::fs::read_dir(STATE_DIR.as_path())? {
+        let path = entry?.path();
+
+        let f = File::open(&path)?;
+        let reader = BufReader::new(f);
+        let project: Project = serde_json::from_reader(reader)?;
+
+        let (_, pid) = parse_state_filename(&path)?;
+
+        if is_process_running(pid) {
+            set.insert(project.display.unwrap_or(project.name));
+        } else {
+            // If the process isn't running, then there is no need to keep the file
+            std::fs::remove_file(path)?;
         }
-        Fork::Child => {
-            // TODO: Should I use `duct` or something to combine stderr and stdout to get all
-            // output to the file maybe?
-            let f = File::create("/Users/sebastian/foobar.txt").unwrap();
-            std::process::Command::new("yarn")
-                .args(["serve"])
-                .current_dir("/Users/sebastian/work/smartdok-bff")
-                .stdout(f)
-                .stderr(Stdio::null())
-                .stdin(Stdio::null())
-                .exec();
+    }
+
+    for project in set {
+        println!("{} is running", project);
+    }
+
+    Ok(())
+}
+
+fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
+    // Try to terminate all processes that the user wants to stop
+    for entry in std::fs::read_dir(STATE_DIR.as_path())? {
+        let path = entry?.path();
+
+        let (project, pid) = parse_state_filename(&path)?;
+
+        if projects.iter().any(|p| p.name == project) {
+            let _ = terminate(pid);
+        };
+    }
+
+    let timeout = Duration::new(5, 0);
+    let start = Instant::now();
+
+    let mut set: HashSet<String> = HashSet::new();
+    let mut finished = true;
+    while Instant::now().duration_since(start) < timeout {
+        finished = true;
+        set.clear();
+        for entry in std::fs::read_dir(STATE_DIR.as_path())? {
+            let path = entry?.path();
+
+            let (project, pid) = parse_state_filename(&path)?;
+
+            if let Some(p) = projects.iter().find(|p| p.name == project) {
+                if is_process_running(pid) {
+                    finished = false;
+                    set.insert(p.display.clone().unwrap_or_else(|| p.name.clone()));
+                } else {
+                    std::fs::remove_file(path)?;
+
+                    let log_file = LOG_DIR.join(&p.name);
+                    let _ = std::fs::remove_file(log_file);
+                }
+            };
+        }
+
+        if finished {
+            break;
+        }
+    }
+
+    if !finished {
+        for project in set {
+            println!("Was not able to stop {}", project);
         }
     }
 
     Ok(())
 }
 
-#[derive(Parser, Debug, Clone)]
-enum Projects {
-    SmartDokUI,
-    SmartApi,
-    MobileApi,
-    SmartDokBFF,
-    SmartDokWeb,
-}
+fn start(projects: Vec<Project>) -> Result<(), anyhow::Error> {
+    let master_pid = sysinfo::get_current_pid().unwrap();
+    for project in projects {
+        match daemon().map_err(|e| anyhow!("Error: {} on daemon: {:?}", e, project))? {
+            Fork::Parent(pid) => {
+                let filename = format!("{}-{}", project.name, pid);
+                let state_file = STATE_DIR.join(filename);
 
-// TODO: Dependant on ngrok config
-impl Display for Projects {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Projects::SmartDokUI => write!(f, "ui"),
-            Projects::SmartApi => write!(f, "smartapi"),
-            Projects::MobileApi => write!(f, "mobileapi"),
-            Projects::SmartDokBFF => write!(f, "bff"),
-            Projects::SmartDokWeb => write!(f, "web"),
+                let file = File::create(state_file)?;
+                serde_json::to_writer(file, &project)?;
+            }
+            Fork::Child => {
+                let tmp_file = LOG_DIR.join(&project.name);
+                let f = File::create(tmp_file)?;
+
+                // Create a raw filedescriptor to use to merge stdout and stderr
+                let fd = f.into_raw_fd();
+
+                let parts = shlex::split(&project.command)
+                    .context(format!("Couldn't parse command: {}", project.command))?;
+
+                std::process::Command::new(&parts[0])
+                    .args(&parts[1..])
+                    .envs(project.envs.unwrap_or_default())
+                    .current_dir(project.cwd)
+                    .stdout(unsafe { Stdio::from_raw_fd(fd) })
+                    .stderr(unsafe { Stdio::from_raw_fd(fd) })
+                    .stdin(Stdio::null())
+                    .exec();
+            }
+        }
+
+        // Prevent trying to start a project multiple times
+        let current_pid = sysinfo::get_current_pid().unwrap();
+        if current_pid != master_pid {
+            break;
         }
     }
+
+    Ok(())
 }
 
-impl FromStr for Projects {
+#[derive(Deserialize, Debug)]
+struct Config {
+    project: Vec<Project>,
+}
+
+#[derive(Deserialize, Clone, Debug, Serialize)]
+struct Project {
+    name: String,
+    command: String,
+    cwd: String,
+    display: Option<String>,
+    envs: Option<HashMap<String, String>>,
+}
+
+impl FromStr for Project {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "ui" | "smartdokui" | "smartdok-ui" => Ok(Self::SmartDokUI),
-            "bff" => Ok(Self::SmartDokBFF),
-            "smartapi" => Ok(Self::SmartApi),
-            "mobileapi" => Ok(Self::MobileApi),
-            "web" => Ok(Self::SmartDokWeb),
-            _ => Err(anyhow::anyhow!("Unknown project")),
-        }
+        let config_file = CONFIG_DIR.join(CONFIG_FILE);
+        let config_string = std::fs::read_to_string(config_file)?;
+
+        // Deserialize the TOML string into the Config struct
+        let config: Config = toml::from_str(&config_string)?;
+
+        let projects = config
+            .project
+            .iter()
+            .map(|p| p.name.clone())
+            .collect::<Vec<String>>();
+
+        config
+            .project
+            .clone()
+            .into_iter()
+            .find(|it| it.name == s)
+            .context(format!("Valid projects are {:?}", projects))
     }
 }
 
 #[derive(Debug, Parser)]
-struct RunArgs {
-    projects: Vec<Projects>,
+struct ActionArgs {
+    projects: Vec<Project>,
 }
 
 #[derive(Debug, Parser)]
-struct LogArgs {
-    project: Projects,
+struct LogsArgs {
+    project: Project,
     #[arg(short, long)]
     follow: bool,
 }
 
 #[derive(Parser, Debug)]
 enum SubCommands {
-    Run(RunArgs),
-    Log(LogArgs),
+    /// Starts the specified project(s). E.g. `worker start foo bar`
+    Start(ActionArgs),
+    /// Stops the specified project(s). E.g. `worker stop foo bar`
+    Stop(ActionArgs),
+    /// Restarts the specified project(s). E.g. `worker restart foo bar` (Same as running stop and then start)
+    Restart(ActionArgs),
+    /// Print out logs for the specified project.
+    /// Additionally accepts `-f` to follow the log. E.g. `worker logs foo`
+    Logs(LogsArgs),
+    /// Prints out a status of which projects is running. Accepts no additional flags or project(s)
+    Status,
 }
 
 #[derive(Parser, Debug)]
@@ -132,13 +270,39 @@ struct Cli {
     subcommand: SubCommands,
 }
 
+// Scan root directories until we hopefully find `.worker.toml` or `worker.toml`
+pub fn find_config_file() -> Result<Option<PathBuf>, anyhow::Error> {
+    let mut dir = std::env::current_dir()?;
+    loop {
+        if dir.join(".worker.toml").exists() {
+            return Ok(Some(dir));
+        }
+        if let Some(parent) = dir.parent() {
+            dir = parent.to_path_buf();
+        } else {
+            return Ok(None);
+        }
+    }
+}
+
 fn main() -> Result<(), anyhow::Error> {
-    // TODO: Dedup the projects passed as arg to run maybe
+    // TODO: Maybe dedup the projects passed as arg to run maybe
     let args = Cli::parse();
 
+    // CONFIG_DIR is evaluated at runtime and panics if not found. If found, make sure that the
+    // directories needed to store the log and state files are existing
+    std::fs::create_dir_all(STATE_DIR.as_path())?;
+    std::fs::create_dir_all(LOG_DIR.as_path())?;
+
     match args.subcommand {
-        SubCommands::Run(run_args) => run(run_args)?,
-        SubCommands::Log(log_args) => log(log_args)?,
+        SubCommands::Start(args) => start(args.projects)?,
+        SubCommands::Stop(args) => stop(args.projects)?,
+        SubCommands::Restart(args) => {
+            stop(args.projects.clone())?;
+            start(args.projects)?;
+        }
+        SubCommands::Logs(log_args) => log(log_args)?,
+        SubCommands::Status => status()?,
     }
 
     Ok(())
