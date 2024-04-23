@@ -9,6 +9,21 @@ to be able to fork processes and run them in the background. I cannot guarantee
 that this is able to always have control of the running processes, and that
 zombie processes wont happen, so use at your own risk :)
 
+## Install
+
+This is currently not on `crates.io`. I will consider uploading it there later.
+To install this for now, you will have to clone the repo and build it for
+yourself.
+
+```sh
+git clone https://github.com/seblj/worker.git
+cd worker
+cargo build --release
+```
+
+You can then just either symlink or copy the binary in
+`worker/target/release/worker` to somewhere in `$PATH`
+
 ## Setup
 
 To setup, create a `.worker.toml` in the root of where the projects are
