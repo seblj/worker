@@ -11,18 +11,9 @@ zombie processes wont happen, so use at your own risk :)
 
 ## Install
 
-This is currently not on `crates.io`. I will consider uploading it there later.
-To install this for now, you will have to clone the repo and build it for
-yourself.
-
 ```sh
-git clone https://github.com/seblj/worker.git
-cd worker
-cargo build --release
+cargo install --git https://github.com/seblj/worker
 ```
-
-You can then just either symlink or copy the binary in
-`worker/target/release/worker` to somewhere in `$PATH`
 
 ## Setup
 
