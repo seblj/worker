@@ -37,6 +37,13 @@ pub fn terminate(pid: i32) -> Result<(), i32> {
     }
 }
 
+pub fn interrupt(pid: i32) -> Result<(), i32> {
+    match unsafe { libc::kill(pid, libc::SIGINT) } {
+        0 => Ok(()),
+        e => Err(e),
+    }
+}
+
 pub fn is_process_running(pid: libc::pid_t) -> bool {
     let mut sys = System::new();
     sys.refresh_all();

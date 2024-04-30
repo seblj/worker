@@ -16,7 +16,7 @@ use std::{
 use anyhow::{anyhow, bail, Context};
 use clap::{command, Parser};
 use lazy_static::lazy_static;
-use libc::{daemon, is_process_running, terminate, Fork};
+use libc::{daemon, interrupt, is_process_running, terminate, Fork};
 use serde::{Deserialize, Serialize};
 
 pub mod libc;
@@ -113,6 +113,9 @@ fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
 
         if projects.iter().any(|p| p.name == project) {
             let _ = terminate(pid);
+            // Try to interrupt as well as terminate. For some reason, `dotnet watch run` didn't
+            // want to be terminated with `SIGTERM`. This seems to work
+            let _ = interrupt(pid);
         };
     }
 
