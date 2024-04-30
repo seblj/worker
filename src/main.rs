@@ -70,7 +70,7 @@ fn parse_state_filename(path: &Path) -> anyhow::Result<(String, i32)> {
         .context("No filename")?
         .to_str()
         .context("Invalid unicode filename")?
-        .split_once('-')
+        .rsplit_once('-')
         .context("File doesn't contain -")?;
 
     let pid = pid.parse::<i32>().context("Couldn't parse pid to i32")?;
