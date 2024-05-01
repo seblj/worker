@@ -16,7 +16,7 @@ use std::{
 use anyhow::{anyhow, bail, Context};
 use clap::{command, Parser};
 use lazy_static::lazy_static;
-use libc::{daemon, interrupt, is_process_running, terminate, Fork};
+use libc::{daemon, has_processes_running, kill, Fork};
 use serde::{Deserialize, Serialize};
 
 pub mod libc;
@@ -87,9 +87,9 @@ fn status() -> Result<(), anyhow::Error> {
         let reader = BufReader::new(f);
         let project: Project = serde_json::from_reader(reader)?;
 
-        let (_, pid) = parse_state_filename(&path)?;
+        let (_, sid) = parse_state_filename(&path)?;
 
-        if is_process_running(pid) {
+        if has_processes_running(sid) {
             set.insert(project.display.unwrap_or(project.name));
         } else {
             // If the process isn't running, then there is no need to keep the file
@@ -109,38 +109,38 @@ fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
     for entry in std::fs::read_dir(STATE_DIR.as_path())? {
         let path = entry?.path();
 
-        let (project, pid) = parse_state_filename(&path)?;
+        let (project, sid) = parse_state_filename(&path)?;
 
         if projects.iter().any(|p| p.name == project) {
-            let _ = terminate(pid);
-            // Try to interrupt as well as terminate. For some reason, `dotnet watch run` didn't
-            // want to be terminated with `SIGTERM`. This seems to work
-            let _ = interrupt(pid);
+            let _ = kill(sid);
         };
     }
 
     let timeout = Duration::new(5, 0);
     let start = Instant::now();
 
-    let mut set: HashSet<String> = HashSet::new();
+    let mut not_deleted: HashSet<MinimalProject> = HashSet::new();
+    let mut deleted: HashSet<MinimalProject> = HashSet::new();
     let mut finished = true;
     while Instant::now().duration_since(start) < timeout {
         finished = true;
-        set.clear();
+        not_deleted.clear();
         for entry in std::fs::read_dir(STATE_DIR.as_path())? {
             let path = entry?.path();
 
             let (project, pid) = parse_state_filename(&path)?;
 
             if let Some(p) = projects.iter().find(|p| p.name == project) {
-                if is_process_running(pid) {
+                let minimal_project = MinimalProject {
+                    name: p.name.clone(),
+                    display: p.display.clone(),
+                };
+                if has_processes_running(pid) {
                     finished = false;
-                    set.insert(p.display.clone().unwrap_or_else(|| p.name.clone()));
+                    not_deleted.insert(minimal_project);
                 } else {
+                    deleted.insert(minimal_project);
                     std::fs::remove_file(path)?;
-
-                    let log_file = LOG_DIR.join(&p.name);
-                    let _ = std::fs::remove_file(log_file);
                 }
             };
         }
@@ -150,9 +150,18 @@ fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
         }
     }
 
+    // Only delete logs for the processes we were actually able to delete
+    for project in deleted.difference(&not_deleted) {
+        let log_file = LOG_DIR.join(&project.name);
+        let _ = std::fs::remove_file(log_file);
+    }
+
     if !finished {
-        for project in set {
-            println!("Was not able to stop {}", project);
+        for project in not_deleted {
+            println!(
+                "Was not able to stop {}",
+                project.display.unwrap_or(project.name)
+            );
         }
     }
 
@@ -162,33 +171,26 @@ fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
 fn start(projects: Vec<Project>) -> Result<(), anyhow::Error> {
     let master_pid = sysinfo::get_current_pid().unwrap();
     for project in projects {
-        match daemon().map_err(|e| anyhow!("Error: {} on daemon: {:?}", e, project))? {
-            Fork::Parent(pid) => {
-                let filename = format!("{}-{}", project.name, pid);
-                let state_file = STATE_DIR.join(filename);
+        if let Fork::Child =
+            daemon(&project).map_err(|e| anyhow!("Error: {} on daemon: {:?}", e, project))?
+        {
+            let tmp_file = LOG_DIR.join(&project.name);
+            let f = File::create(tmp_file)?;
 
-                let file = File::create(state_file)?;
-                serde_json::to_writer(file, &project)?;
-            }
-            Fork::Child => {
-                let tmp_file = LOG_DIR.join(&project.name);
-                let f = File::create(tmp_file)?;
+            // Create a raw filedescriptor to use to merge stdout and stderr
+            let fd = f.into_raw_fd();
 
-                // Create a raw filedescriptor to use to merge stdout and stderr
-                let fd = f.into_raw_fd();
+            let parts = shlex::split(&project.command)
+                .context(format!("Couldn't parse command: {}", project.command))?;
 
-                let parts = shlex::split(&project.command)
-                    .context(format!("Couldn't parse command: {}", project.command))?;
-
-                std::process::Command::new(&parts[0])
-                    .args(&parts[1..])
-                    .envs(project.envs.unwrap_or_default())
-                    .current_dir(project.cwd)
-                    .stdout(unsafe { Stdio::from_raw_fd(fd) })
-                    .stderr(unsafe { Stdio::from_raw_fd(fd) })
-                    .stdin(Stdio::null())
-                    .exec();
-            }
+            std::process::Command::new(&parts[0])
+                .args(&parts[1..])
+                .envs(project.envs.unwrap_or_default())
+                .current_dir(project.cwd)
+                .stdout(unsafe { Stdio::from_raw_fd(fd) })
+                .stderr(unsafe { Stdio::from_raw_fd(fd) })
+                .stdin(Stdio::null())
+                .exec();
         }
 
         // Prevent trying to start a project multiple times
@@ -206,8 +208,14 @@ struct Config {
     project: Vec<Project>,
 }
 
+#[derive(Eq, PartialEq, Hash)]
+struct MinimalProject {
+    name: String,
+    display: Option<String>,
+}
+
 #[derive(Deserialize, Clone, Debug, Serialize)]
-struct Project {
+pub struct Project {
     name: String,
     command: String,
     cwd: String,
