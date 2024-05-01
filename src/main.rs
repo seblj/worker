@@ -33,8 +33,14 @@ lazy_static! {
 
 // TODO: Should not read the entire file. Should only read last x lines or something
 fn log(log_args: LogsArgs) -> Result<(), anyhow::Error> {
-    let log_file = LOG_DIR.join(log_args.project.name);
-    let file = File::open(log_file)?;
+    let log_file = LOG_DIR.join(&log_args.project.name);
+    let file = File::open(log_file).map_err(|_| {
+        // If the log doesn't exist, it should mean that the project isn't running
+        anyhow!(
+            "{} is not running",
+            log_args.project.display.unwrap_or(log_args.project.name)
+        )
+    })?;
 
     let mut reader = BufReader::new(file);
     let mut buffer = String::new();
