@@ -2,7 +2,12 @@ use std::{
     collections::{HashMap, HashSet},
     fs::File,
     io::{BufRead, BufReader, Read},
+    os::{
+        fd::{FromRawFd, IntoRawFd},
+        unix::process::CommandExt,
+    },
     path::{Path, PathBuf},
+    process::Stdio,
     str::FromStr,
     thread::sleep,
     time::{Duration, Instant},
@@ -189,18 +194,20 @@ fn start(projects: Vec<Project>) -> Result<(), anyhow::Error> {
             let tmp_file = LOG_DIR.join(&project.name);
             let f = File::create(tmp_file)?;
 
+            // Create a raw filedescriptor to use to merge stdout and stderr
+            let fd = f.into_raw_fd();
+
             let parts = shlex::split(&project.command)
                 .context(format!("Couldn't parse command: {}", project.command))?;
 
-            let mut env_map: HashMap<_, _> = std::env::vars().collect();
-            env_map.extend(project.envs.unwrap_or_default());
-
-            duct::cmd(&parts[0], &parts[1..])
-                .full_env(env_map)
-                .dir(project.cwd)
-                .stderr_to_stdout()
-                .stdout_file(f)
-                .run()?;
+            std::process::Command::new(&parts[0])
+                .args(&parts[1..])
+                .envs(project.envs.unwrap_or_default())
+                .current_dir(project.cwd)
+                .stdout(unsafe { Stdio::from_raw_fd(fd) })
+                .stderr(unsafe { Stdio::from_raw_fd(fd) })
+                .stdin(Stdio::null())
+                .exec();
         }
 
         // Prevent trying to start a project multiple times

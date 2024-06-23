@@ -8,7 +8,6 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.82"
 clap = { version = "4.0.27", features = ["derive", "string"] }
-duct = "0.13.7"
 lazy_static = "1.4.0"
 libc = "0.2.153"
 serde = { version = "1.0.198", features = ["derive"] }
