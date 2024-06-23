@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs::File,
     io::{BufRead, BufReader, Read},
     os::{
@@ -31,11 +31,23 @@ lazy_static! {
         .expect("Couldn't find config dir");
 }
 
-fn get_running_projects() -> Result<Vec<(String, i32)>, anyhow::Error> {
+// Try to get vec of running projects. Try to remove the state file if the process is not running
+fn get_running_projects() -> Result<Vec<MinimalProject>, anyhow::Error> {
     let projects = std::fs::read_dir(STATE_DIR.as_path())?
         .filter_map(|entry| {
             let path = entry.ok()?.path();
-            parse_state_filename(&path).ok()
+            let (name, sid) = parse_state_filename(&path).ok()?;
+            let project = Project::from_str(&name).ok()?;
+            has_processes_running(sid)
+                .then_some(MinimalProject {
+                    name,
+                    display: project.display,
+                    pid: sid,
+                })
+                .or_else(|| {
+                    std::fs::remove_file(path).ok()?;
+                    None
+                })
         })
         .collect::<Vec<_>>();
 
@@ -95,91 +107,42 @@ fn parse_state_filename(path: &Path) -> anyhow::Result<(String, i32)> {
 }
 
 fn status() -> Result<(), anyhow::Error> {
-    let mut set: HashSet<String> = HashSet::new();
-
-    for entry in std::fs::read_dir(STATE_DIR.as_path())? {
-        let path = entry?.path();
-
-        let f = File::open(&path)?;
-        let reader = BufReader::new(f);
-        let project: Project = serde_json::from_reader(reader)?;
-
-        let (_, sid) = parse_state_filename(&path)?;
-
-        if has_processes_running(sid) {
-            set.insert(project.display.unwrap_or(project.name));
-        } else {
-            // If the process isn't running, then there is no need to keep the file
-            std::fs::remove_file(path)?;
-        }
-    }
-
-    for project in set {
-        println!("{} is running", project);
+    for project in get_running_projects()? {
+        println!("{} is running", project.display.unwrap_or(project.name));
     }
 
     Ok(())
 }
 
 fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
-    // Try to terminate all processes that the user wants to stop
     let running_projects = get_running_projects()?;
 
-    for project in projects.iter() {
-        if let Some(p) = running_projects.iter().find(|p| p.0 == project.name) {
-            let _ = killpg(p.1);
+    // Try to terminate all processes that the user wants to stop
+    for project in projects {
+        if let Some(p) = running_projects.iter().find(|p| p.name == project.name) {
+            let _ = killpg(p.pid);
         } else {
             eprintln!("Cannot stop project not running: {}", project.name);
         }
     }
 
+    // Verify that the processes actually got stopped, and print out if we encountered any errors
     let timeout = Duration::new(5, 0);
     let start = Instant::now();
 
-    let mut not_deleted: HashSet<MinimalProject> = HashSet::new();
-    let mut deleted: HashSet<MinimalProject> = HashSet::new();
-    let mut finished = true;
+    let mut not_deleted = Vec::new();
     while Instant::now().duration_since(start) < timeout {
-        finished = true;
-        not_deleted.clear();
-        for entry in std::fs::read_dir(STATE_DIR.as_path())? {
-            let path = entry?.path();
-
-            let (project, pid) = parse_state_filename(&path)?;
-
-            if let Some(p) = projects.iter().find(|p| p.name == project) {
-                let minimal_project = MinimalProject {
-                    name: p.name.clone(),
-                    display: p.display.clone(),
-                };
-                if has_processes_running(pid) {
-                    finished = false;
-                    not_deleted.insert(minimal_project);
-                } else {
-                    deleted.insert(minimal_project);
-                    std::fs::remove_file(path)?;
-                }
-            };
-        }
-
-        if finished {
-            break;
+        not_deleted = get_running_projects()?;
+        if not_deleted.is_empty() {
+            return Ok(());
         }
     }
 
-    // Only delete logs for the processes we were actually able to delete
-    for project in deleted.difference(&not_deleted) {
-        let log_file = LOG_DIR.join(&project.name);
-        let _ = std::fs::remove_file(log_file);
-    }
-
-    if !finished {
-        for project in not_deleted {
-            println!(
-                "Was not able to stop {}",
-                project.display.unwrap_or(project.name)
-            );
-        }
+    for project in not_deleted {
+        println!(
+            "Was not able to stop {}",
+            project.display.unwrap_or(project.name)
+        );
     }
 
     Ok(())
@@ -223,17 +186,13 @@ fn start(projects: Vec<Project>) -> Result<(), anyhow::Error> {
 fn restart(projects: Vec<Project>) -> Result<(), anyhow::Error> {
     let running_projects = get_running_projects()?;
 
-    let projects = projects
+    let (projects, filtered): (Vec<_>, Vec<_>) = projects
         .into_iter()
-        .filter(|p| {
-            if running_projects.iter().any(|rp| rp.0 == *p.name) {
-                true
-            } else {
-                eprintln!("Cannot restart project not running: {}", p.name);
-                false
-            }
-        })
-        .collect::<Vec<_>>();
+        .partition(|p| running_projects.iter().any(|rp| rp.name == p.name));
+
+    for project in filtered {
+        eprintln!("Cannot restart project not running: {}", project.name);
+    }
 
     stop(projects.clone())?;
     start(projects)?;
@@ -250,6 +209,7 @@ struct Config {
 struct MinimalProject {
     name: String,
     display: Option<String>,
+    pid: i32,
 }
 
 #[derive(Deserialize, Clone, Debug, Serialize)]
@@ -279,7 +239,6 @@ impl FromStr for Project {
 
         config
             .project
-            .clone()
             .into_iter()
             .find(|it| it.name == s)
             .context(format!("Valid projects are {:?}", projects))
