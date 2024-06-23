@@ -31,6 +31,19 @@ lazy_static! {
         .expect("Couldn't find config dir");
 }
 
+fn get_running_projects() -> Result<Vec<(String, i32)>, anyhow::Error> {
+    let projects = std::fs::read_dir(STATE_DIR.as_path())?
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+
+            let (project, sid) = parse_state_filename(&path).ok()?;
+            Some((project, sid))
+        })
+        .collect::<Vec<_>>();
+
+    Ok(projects)
+}
+
 // TODO: Should not read the entire file. Should only read last x lines or something
 fn log(log_args: LogsArgs) -> Result<(), anyhow::Error> {
     let log_file = LOG_DIR.join(&log_args.project.name);
@@ -112,14 +125,14 @@ fn status() -> Result<(), anyhow::Error> {
 
 fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
     // Try to terminate all processes that the user wants to stop
-    for entry in std::fs::read_dir(STATE_DIR.as_path())? {
-        let path = entry?.path();
+    let running_projects = get_running_projects()?;
 
-        let (project, sid) = parse_state_filename(&path)?;
-
-        if projects.iter().any(|p| p.name == project) {
-            let _ = kill(sid);
-        };
+    for project in projects.iter() {
+        if let Some(p) = running_projects.iter().find(|p| p.0 == project.name) {
+            let _ = kill(p.1);
+        } else {
+            eprintln!("Cannot stop project not running: {}", project.name);
+        }
     }
 
     let timeout = Duration::new(5, 0);
@@ -205,6 +218,27 @@ fn start(projects: Vec<Project>) -> Result<(), anyhow::Error> {
             break;
         }
     }
+
+    Ok(())
+}
+
+fn restart(projects: Vec<Project>) -> Result<(), anyhow::Error> {
+    let running_projects = get_running_projects()?;
+
+    let projects = projects
+        .into_iter()
+        .filter(|p| {
+            if running_projects.iter().any(|rp| rp.0 == *p.name) {
+                true
+            } else {
+                eprintln!("Cannot restart project not running: {}", p.name);
+                false
+            }
+        })
+        .collect::<Vec<_>>();
+
+    stop(projects.clone())?;
+    start(projects)?;
 
     Ok(())
 }
@@ -314,10 +348,7 @@ fn main() -> Result<(), anyhow::Error> {
     match args.subcommand {
         SubCommands::Start(args) => start(args.projects)?,
         SubCommands::Stop(args) => stop(args.projects)?,
-        SubCommands::Restart(args) => {
-            stop(args.projects.clone())?;
-            start(args.projects)?;
-        }
+        SubCommands::Restart(args) => restart(args.projects)?,
         SubCommands::Logs(log_args) => log(log_args)?,
         SubCommands::Status => status()?,
     }
