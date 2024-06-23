@@ -130,15 +130,15 @@ fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
     let timeout = Duration::new(5, 0);
     let start = Instant::now();
 
-    let mut not_deleted = Vec::new();
+    let mut running_projects = Vec::new();
     while Instant::now().duration_since(start) < timeout {
-        not_deleted = get_running_projects()?;
-        if not_deleted.is_empty() {
+        running_projects = get_running_projects()?;
+        if running_projects.is_empty() {
             return Ok(());
         }
     }
 
-    for project in not_deleted {
+    for project in running_projects {
         println!(
             "Was not able to stop {}",
             project.display.unwrap_or(project.name)
