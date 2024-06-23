@@ -2,12 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs::File,
     io::{BufRead, BufReader, Read},
-    os::{
-        fd::{FromRawFd, IntoRawFd},
-        unix::process::CommandExt,
-    },
     path::{Path, PathBuf},
-    process::Stdio,
     str::FromStr,
     thread::sleep,
     time::{Duration, Instant},
@@ -16,7 +11,7 @@ use std::{
 use anyhow::{anyhow, bail, Context};
 use clap::{command, Parser};
 use lazy_static::lazy_static;
-use libc::{daemon, has_processes_running, kill, Fork};
+use libc::{daemon, has_processes_running, killpg, Fork};
 use serde::{Deserialize, Serialize};
 
 pub mod libc;
@@ -35,9 +30,7 @@ fn get_running_projects() -> Result<Vec<(String, i32)>, anyhow::Error> {
     let projects = std::fs::read_dir(STATE_DIR.as_path())?
         .filter_map(|entry| {
             let path = entry.ok()?.path();
-
-            let (project, sid) = parse_state_filename(&path).ok()?;
-            Some((project, sid))
+            parse_state_filename(&path).ok()
         })
         .collect::<Vec<_>>();
 
@@ -129,7 +122,7 @@ fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
 
     for project in projects.iter() {
         if let Some(p) = running_projects.iter().find(|p| p.0 == project.name) {
-            let _ = kill(p.1);
+            let _ = killpg(p.1);
         } else {
             eprintln!("Cannot stop project not running: {}", project.name);
         }

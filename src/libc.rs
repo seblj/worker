@@ -26,8 +26,6 @@ pub fn setsid() -> Result<libc::pid_t, i32> {
     }
 }
 
-// TODO: I need to capture the return output from `setsid` or something, and then later kill all
-// processes inside that group. This should fix my problems
 pub fn daemon(project: &Project) -> Result<Fork, i32> {
     match fork() {
         Ok(Fork::Child) => setsid().and_then(|sid| {
@@ -42,9 +40,8 @@ pub fn daemon(project: &Project) -> Result<Fork, i32> {
     }
 }
 
-// Sends SIGKILL to the process group provided, killing all processes
-pub fn kill(sid: i32) -> Result<(), i32> {
-    match unsafe { libc::killpg(sid, libc::SIGKILL) } {
+pub fn killpg(sid: i32) -> Result<(), i32> {
+    match unsafe { libc::killpg(sid, libc::SIGINT) } {
         0 => Ok(()),
         e => Err(e),
     }
