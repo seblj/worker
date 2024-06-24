@@ -40,8 +40,15 @@ pub fn daemon(project: &Project) -> Result<Fork, i32> {
     }
 }
 
-pub fn killpg(sid: i32) -> Result<(), i32> {
+pub fn interrupt_pg(sid: i32) -> Result<(), i32> {
     match unsafe { libc::killpg(sid, libc::SIGINT) } {
+        0 => Ok(()),
+        e => Err(e),
+    }
+}
+
+pub fn kill_pg(sid: i32) -> Result<(), i32> {
+    match unsafe { libc::killpg(sid, libc::SIGKILL) } {
         0 => Ok(()),
         e => Err(e),
     }
