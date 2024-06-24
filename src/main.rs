@@ -16,7 +16,7 @@ use std::{
 use anyhow::{anyhow, bail, Context};
 use clap::{command, Parser};
 use lazy_static::lazy_static;
-use libc::{daemon, has_processes_running, interrupt_pg, kill_pg, Fork};
+use libc::{daemon, has_processes_running, stop_pg, Fork, Signal};
 use serde::{Deserialize, Serialize};
 
 pub mod libc;
@@ -42,6 +42,7 @@ fn get_running_projects() -> Result<Vec<MinimalProject>, anyhow::Error> {
                 .then_some(MinimalProject {
                     name,
                     display: project.display,
+                    stop_signal: project.stop_signal,
                     pid: sid,
                 })
                 .or_else(|| {
@@ -114,10 +115,19 @@ fn status() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-// Returns an empty vector if we are able to stop all processes.
-// Otherwise, returns a vector of projects we were not able to stop.
-fn verify_stopped_processes(projects: &[Project]) -> Result<Vec<MinimalProject>, anyhow::Error> {
-    // Verify that the processes actually got stopped, and print out if we encountered any errors
+fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
+    let running_projects = get_running_projects()?;
+
+    // Be kind and use `SIGINT` for the first time we try to stop the projects.
+    for project in projects.iter() {
+        if let Some(p) = running_projects.iter().find(|p| p.name == project.name) {
+            let signal = p.stop_signal.as_ref().unwrap_or(&Signal::SIGINT);
+            let _ = stop_pg(p.pid, signal);
+        } else {
+            eprintln!("Cannot stop project not running: {}", project.name);
+        }
+    }
+
     let timeout = Duration::new(5, 0);
     let start = Instant::now();
 
@@ -132,44 +142,8 @@ fn verify_stopped_processes(projects: &[Project]) -> Result<Vec<MinimalProject>,
             .collect();
 
         if running_projects.is_empty() {
-            return Ok(vec![]);
+            return Ok(());
         }
-    }
-    Ok(running_projects)
-}
-
-fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
-    let running_projects = get_running_projects()?;
-
-    // Be kind and use `SIGINT` for the first time we try to stop the projects.
-    for project in projects.iter() {
-        if let Some(p) = running_projects.iter().find(|p| p.name == project.name) {
-            let _ = interrupt_pg(p.pid);
-        } else {
-            eprintln!("Cannot stop project not running: {}", project.name);
-        }
-    }
-
-    let still_running_projects = verify_stopped_processes(&projects)?;
-    if still_running_projects.is_empty() {
-        return Ok(());
-    }
-
-    // If the first try didn't work, then forcefully try to stop the projects.
-    for project in projects.iter() {
-        if let Some(p) = still_running_projects
-            .iter()
-            .find(|p| p.name == project.name)
-        {
-            let _ = kill_pg(p.pid);
-        } else {
-            eprintln!("Cannot stop project not running: {}", project.name);
-        }
-    }
-
-    let still_running_projects = verify_stopped_processes(&projects)?;
-    if still_running_projects.is_empty() {
-        return Ok(());
     }
 
     // If neither the kind `SIGINT` or forceful `SIGKILL` didn't work, we need to print out that it
@@ -245,6 +219,7 @@ struct Config {
 struct MinimalProject {
     name: String,
     display: Option<String>,
+    stop_signal: Option<Signal>,
     pid: i32,
 }
 
@@ -254,6 +229,7 @@ pub struct Project {
     command: String,
     cwd: String,
     display: Option<String>,
+    stop_signal: Option<Signal>,
     envs: Option<HashMap<String, String>>,
 }
 

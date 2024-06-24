@@ -1,5 +1,6 @@
 use std::fs::File;
 
+use serde::{Deserialize, Serialize};
 use sysinfo::System;
 
 use crate::{Project, STATE_DIR};
@@ -40,15 +41,8 @@ pub fn daemon(project: &Project) -> Result<Fork, i32> {
     }
 }
 
-pub fn interrupt_pg(sid: i32) -> Result<(), i32> {
-    match unsafe { libc::killpg(sid, libc::SIGINT) } {
-        0 => Ok(()),
-        e => Err(e),
-    }
-}
-
-pub fn kill_pg(sid: i32) -> Result<(), i32> {
-    match unsafe { libc::killpg(sid, libc::SIGKILL) } {
+pub fn stop_pg(sid: i32, signal: &Signal) -> Result<(), i32> {
+    match unsafe { libc::killpg(sid, signal.to_owned() as i32) } {
         0 => Ok(()),
         e => Err(e),
     }
@@ -61,4 +55,41 @@ pub fn has_processes_running(sid: libc::pid_t) -> bool {
         p.session_id()
             .is_some_and(|session_id| session_id.as_u32() == sid as u32)
     })
+}
+
+#[derive(Deserialize, Clone, Debug, Serialize, Hash, PartialEq, Eq)]
+#[non_exhaustive]
+#[repr(i32)]
+pub enum Signal {
+    SIGHUP = 1,
+    SIGINT = 2,
+    SIGQUIT = 3,
+    SIGILL = 4,
+    SIGTRAP = 5,
+    SIGABRT = 6,
+    SIGBUS = 7,
+    SIGFPE = 8,
+    SIGKILL = 9,
+    SIGUSR1 = 10,
+    SIGSEGV = 11,
+    SIGUSR2 = 12,
+    SIGPIPE = 13,
+    SIGALRM = 14,
+    SIGTERM = 15,
+    SIGSTKFLT = 16,
+    SIGCHLD = 17,
+    SIGCONT = 18,
+    SIGSTOP = 19,
+    SIGTSTP = 20,
+    SIGTTIN = 21,
+    SIGTTOU = 22,
+    SIGURG = 23,
+    SIGXCPU = 24,
+    SIGXFSZ = 25,
+    SIGVTALRM = 26,
+    SIGPROF = 27,
+    SIGWINCH = 28,
+    SIGIO = 29,
+    SIGPWR = 30,
+    SIGSYS = 31,
 }
