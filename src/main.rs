@@ -118,7 +118,7 @@ fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
     let running_projects = get_running_projects()?;
 
     // Try to terminate all processes that the user wants to stop
-    for project in projects {
+    for project in projects.iter() {
         if let Some(p) = running_projects.iter().find(|p| p.name == project.name) {
             let _ = killpg(p.pid);
         } else {
@@ -132,7 +132,14 @@ fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
 
     let mut running_projects = Vec::new();
     while Instant::now().duration_since(start) < timeout {
-        running_projects = get_running_projects()?;
+        // Get all running projects and filter them on projects we are trying to stop.
+        // If some of them are still running, we should print out a message that we failed to stop
+        // them
+        running_projects = get_running_projects()?
+            .into_iter()
+            .filter(|rp| projects.iter().any(|p| rp.name == p.name))
+            .collect();
+
         if running_projects.is_empty() {
             return Ok(());
         }
