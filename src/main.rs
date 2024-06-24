@@ -32,16 +32,12 @@ lazy_static! {
 }
 
 fn try_cleanup_state() -> Result<(), anyhow::Error> {
-    let running_projects = get_running_projects()?;
-    for p in running_projects.iter() {
-        let _ = std::fs::remove_file(LOG_DIR.join(&p.name));
-    }
-
     for entry in std::fs::read_dir(STATE_DIR.as_path())? {
         let path = entry?.path();
-        let (_, sid) = parse_state_filename(&path)?;
+        let (name, sid) = parse_state_filename(&path)?;
         if !has_processes_running(sid) {
             let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(LOG_DIR.join(name));
         }
     }
 
@@ -153,8 +149,7 @@ fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
     let mut running_projects = Vec::new();
     while Instant::now().duration_since(start) < timeout {
         // Get all running projects and filter them on projects we are trying to stop.
-        // If some of them are still running, we should print out a message that we failed to stop
-        // them
+        // If some of them are still running, we should print out a message that we failed to stop them
         running_projects = get_running_projects()?
             .into_iter()
             .filter(|rp| running.iter().any(|p| rp.name == p.name))
@@ -169,8 +164,6 @@ fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
 
     try_cleanup_state()?;
 
-    // If neither the kind `SIGINT` or forceful `SIGKILL` didn't work, we need to print out that it
-    // failed to stop the projects...
     for project in running_projects {
         println!(
             "Was not able to stop {}",
