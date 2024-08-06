@@ -238,6 +238,23 @@ fn restart(projects: Vec<Project>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+fn list() -> Result<(), anyhow::Error> {
+    let config_file = CONFIG_DIR.join(CONFIG_FILE);
+    let config_string = std::fs::read_to_string(config_file)?;
+
+    // Deserialize the TOML string into the Config struct
+    let config: Config = toml::from_str(&config_string)?;
+    for p in config.project {
+        if let Some(display) = p.display {
+            println!("{} ({})", display, p.name)
+        } else {
+            println!("{}", p.name)
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Deserialize, Debug)]
 struct Config {
     project: Vec<Project>,
@@ -310,6 +327,7 @@ enum SubCommands {
     Logs(LogsArgs),
     /// Prints out a status of which projects is running. Accepts no additional flags or project(s)
     Status,
+    List,
 }
 
 #[derive(Parser, Debug)]
@@ -348,6 +366,7 @@ fn main() -> Result<(), anyhow::Error> {
         SubCommands::Restart(args) => restart(args.projects)?,
         SubCommands::Logs(log_args) => log(log_args)?,
         SubCommands::Status => status()?,
+        SubCommands::List => list()?,
     }
 
     Ok(())
