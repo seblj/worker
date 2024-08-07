@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fmt::Display,
     fs::File,
     io::{BufRead, BufReader, Read},
@@ -7,7 +6,7 @@ use std::{
         fd::{FromRawFd, IntoRawFd},
         unix::process::CommandExt,
     },
-    path::{Path, PathBuf},
+    path::Path,
     process::Stdio,
     str::FromStr,
     thread::sleep,
@@ -16,30 +15,20 @@ use std::{
 
 use anyhow::{anyhow, Context};
 use clap::{command, Parser};
+use config::{Project, WorkerConfig};
 use itertools::{Either, Itertools};
-use lazy_static::lazy_static;
 use libc::{daemon, has_processes_running, stop_pg, Fork, Signal};
-use serde::{Deserialize, Serialize};
 
+pub mod config;
 pub mod libc;
 
-const CONFIG_FILE: &str = ".worker.toml";
-
-lazy_static! {
-    static ref STATE_DIR: PathBuf = CONFIG_DIR.join(".worker/state");
-    static ref LOG_DIR: PathBuf = CONFIG_DIR.join(".worker/log");
-    static ref CONFIG_DIR: PathBuf = find_config_file()
-        .expect("Couldn't get current dir")
-        .expect("Couldn't find config dir");
-}
-
-fn try_cleanup_state() -> Result<(), anyhow::Error> {
-    for entry in std::fs::read_dir(STATE_DIR.as_path())? {
+fn try_cleanup_state(config: &WorkerConfig) -> Result<(), anyhow::Error> {
+    for entry in std::fs::read_dir(config.state_dir.as_path())? {
         let path = entry?.path();
         let (name, sid) = parse_state_filename(&path)?;
         if !has_processes_running(sid) {
             let _ = std::fs::remove_file(path);
-            let _ = std::fs::remove_file(LOG_DIR.join(name));
+            let _ = std::fs::remove_file(config.log_dir.join(name));
         }
     }
 
@@ -47,8 +36,8 @@ fn try_cleanup_state() -> Result<(), anyhow::Error> {
 }
 
 // Try to get vec of running projects. Try to remove the state file if the process is not running
-fn get_running_projects() -> Result<Vec<Project>, anyhow::Error> {
-    let projects = std::fs::read_dir(STATE_DIR.as_path())?
+fn get_running_projects(config: &WorkerConfig) -> Result<Vec<Project>, anyhow::Error> {
+    let projects = std::fs::read_dir(config.state_dir.as_path())?
         .filter_map(|entry| {
             let path = entry.ok()?.path();
             let (name, sid) = parse_state_filename(&path).ok()?;
@@ -62,8 +51,8 @@ fn get_running_projects() -> Result<Vec<Project>, anyhow::Error> {
 }
 
 // TODO: Should not read the entire file. Should only read last x lines or something
-fn log(log_args: LogsArgs) -> Result<(), anyhow::Error> {
-    let log_file = LOG_DIR.join(&log_args.project.name);
+fn log(config: &WorkerConfig, log_args: LogsArgs) -> Result<(), anyhow::Error> {
+    let log_file = config.log_dir.join(&log_args.project.name);
     let file = File::open(log_file).map_err(|_| {
         // If the log doesn't exist, it should mean that the project isn't running
         anyhow!("{} is not running", log_args.project)
@@ -103,16 +92,16 @@ fn parse_state_filename(path: &Path) -> anyhow::Result<(String, i32)> {
     Ok((name.to_string(), pid))
 }
 
-fn status() -> Result<(), anyhow::Error> {
-    for project in get_running_projects()? {
+fn status(config: &WorkerConfig) -> Result<(), anyhow::Error> {
+    for project in get_running_projects(config)? {
         println!("{} is running", project);
     }
 
     Ok(())
 }
 
-fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
-    let running_projects = get_running_projects()?;
+fn stop(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Error> {
+    let running_projects = get_running_projects(config)?;
 
     // Partition map to get project with pid set
     let (running, not_running): (Vec<_>, Vec<_>) = projects.into_iter().partition_map(|rp| {
@@ -138,19 +127,19 @@ fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
     while Instant::now().duration_since(start) < timeout {
         // Get all running projects and filter them on projects we are trying to stop.
         // If some of them are still running, we should print out a message that we failed to stop them
-        running_projects = get_running_projects()?
+        running_projects = get_running_projects(config)?
             .into_iter()
             .filter(|rp| running.iter().any(|p| rp.name == p.name))
             .collect();
 
-        try_cleanup_state()?;
+        try_cleanup_state(config)?;
 
         if running_projects.is_empty() {
             return Ok(());
         }
     }
 
-    try_cleanup_state()?;
+    try_cleanup_state(config)?;
 
     for project in running_projects {
         println!("Was not able to stop {}", project);
@@ -159,8 +148,8 @@ fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn start(projects: Vec<Project>) -> Result<(), anyhow::Error> {
-    let running_projects = get_running_projects()?;
+fn start(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Error> {
+    let running_projects = get_running_projects(config)?;
     let (running, not_running): (Vec<_>, Vec<_>) = projects
         .into_iter()
         .partition(|p| running_projects.iter().any(|rp| rp.name == p.name));
@@ -171,10 +160,10 @@ fn start(projects: Vec<Project>) -> Result<(), anyhow::Error> {
 
     let master_pid = sysinfo::get_current_pid().unwrap();
     for project in not_running {
-        if let Fork::Child =
-            daemon(&project).map_err(|e| anyhow!("Error: {} on daemon: {:?}", e, project))?
+        if let Fork::Child = daemon(config, &project)
+            .map_err(|e| anyhow!("Error: {} on daemon: {:?}", e, project))?
         {
-            let tmp_file = LOG_DIR.join(&project.name);
+            let tmp_file = config.log_dir.join(&project.name);
             let f = File::create(tmp_file)?;
 
             // Create a raw filedescriptor to use to merge stdout and stderr
@@ -203,8 +192,8 @@ fn start(projects: Vec<Project>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn restart(projects: Vec<Project>) -> Result<(), anyhow::Error> {
-    let running_projects = get_running_projects()?;
+fn restart(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Error> {
+    let running_projects = get_running_projects(config)?;
 
     let (projects, filtered): (Vec<_>, Vec<_>) = projects
         .into_iter()
@@ -214,41 +203,18 @@ fn restart(projects: Vec<Project>) -> Result<(), anyhow::Error> {
         eprintln!("Cannot restart project not running: {}", project);
     }
 
-    stop(projects.clone())?;
-    start(projects)?;
+    stop(config, projects.clone())?;
+    start(config, projects)?;
 
     Ok(())
 }
 
-fn list() -> Result<(), anyhow::Error> {
-    let config_file = CONFIG_DIR.join(CONFIG_FILE);
-    let config_string = std::fs::read_to_string(config_file)?;
-
-    // Deserialize the TOML string into the Config struct
-    let config: Config = toml::from_str(&config_string)?;
-    for p in config.project {
+fn list(config: &WorkerConfig) -> Result<(), anyhow::Error> {
+    for p in config.projects.iter() {
         println!("{}", p)
     }
 
     Ok(())
-}
-
-#[derive(Deserialize, Debug)]
-struct Config {
-    project: Vec<Project>,
-}
-
-#[derive(Deserialize, Clone, Debug, Serialize)]
-pub struct Project {
-    name: String,
-    command: String,
-    cwd: String,
-    display: Option<String>,
-    stop_signal: Option<Signal>,
-    envs: Option<HashMap<String, String>>,
-
-    #[serde(skip_deserializing)]
-    pid: Option<i32>,
 }
 
 impl Display for Project {
@@ -265,20 +231,16 @@ impl FromStr for Project {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let config_file = CONFIG_DIR.join(CONFIG_FILE);
-        let config_string = std::fs::read_to_string(config_file)?;
-
-        // Deserialize the TOML string into the Config struct
-        let config: Config = toml::from_str(&config_string)?;
+        let config = WorkerConfig::new()?;
 
         let projects = config
-            .project
+            .projects
             .iter()
             .map(|p| p.name.clone())
             .collect::<Vec<String>>();
 
         config
-            .project
+            .projects
             .into_iter()
             .find(|it| it.name == s)
             .with_context(|| format!("Valid projects are {:#?}", projects))
@@ -320,37 +282,19 @@ struct Cli {
     subcommand: SubCommands,
 }
 
-// Scan root directories until we hopefully find the config file
-pub fn find_config_file() -> Result<Option<PathBuf>, anyhow::Error> {
-    let mut dir = std::env::current_dir()?;
-    loop {
-        if dir.join(CONFIG_FILE).exists() {
-            return Ok(Some(dir));
-        }
-        if let Some(parent) = dir.parent() {
-            dir = parent.to_path_buf();
-        } else {
-            return Ok(None);
-        }
-    }
-}
-
 fn main() -> Result<(), anyhow::Error> {
     // TODO: Maybe dedup the projects passed as arg to run maybe
     let args = Cli::parse();
 
-    // CONFIG_DIR is evaluated at runtime and panics if not found. If found, make sure that the
-    // directories needed to store the log and state files are existing
-    std::fs::create_dir_all(STATE_DIR.as_path())?;
-    std::fs::create_dir_all(LOG_DIR.as_path())?;
+    let config = WorkerConfig::new()?;
 
     match args.subcommand {
-        SubCommands::Start(args) => start(args.projects)?,
-        SubCommands::Stop(args) => stop(args.projects)?,
-        SubCommands::Restart(args) => restart(args.projects)?,
-        SubCommands::Logs(log_args) => log(log_args)?,
-        SubCommands::Status => status()?,
-        SubCommands::List => list()?,
+        SubCommands::Start(args) => start(&config, args.projects)?,
+        SubCommands::Stop(args) => stop(&config, args.projects)?,
+        SubCommands::Restart(args) => restart(&config, args.projects)?,
+        SubCommands::Logs(log_args) => log(&config, log_args)?,
+        SubCommands::Status => status(&config)?,
+        SubCommands::List => list(&config)?,
     }
 
     Ok(())

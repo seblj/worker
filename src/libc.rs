@@ -3,14 +3,14 @@ use std::fs::File;
 use serde::{Deserialize, Serialize};
 use sysinfo::System;
 
-use crate::{Project, STATE_DIR};
+use crate::{config::WorkerConfig, Project};
 
 pub enum Fork {
     Parent(libc::pid_t),
     Child,
 }
 
-fn fork() -> Result<Fork, i32> {
+pub fn fork() -> Result<Fork, i32> {
     let res = unsafe { libc::fork() };
     match res {
         -1 => Err(-1),
@@ -27,11 +27,12 @@ pub fn setsid() -> Result<libc::pid_t, i32> {
     }
 }
 
-pub fn daemon(project: &Project) -> Result<Fork, i32> {
+pub fn daemon(config: &WorkerConfig, project: &Project) -> Result<Fork, i32> {
     match fork() {
         Ok(Fork::Child) => setsid().and_then(|sid| {
+            println!("sid in daemon: {}", sid);
             let filename = format!("{}-{}", project.name, sid);
-            let state_file = STATE_DIR.join(filename);
+            let state_file = config.state_dir.join(filename);
 
             let file = File::create(state_file).expect("Couldn't create state file");
             serde_json::to_writer(file, project).expect("Couldn't write to state file");
