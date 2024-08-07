@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt::Display,
     fs::File,
     io::{BufRead, BufReader, Read},
     os::{
@@ -117,7 +118,7 @@ fn parse_state_filename(path: &Path) -> anyhow::Result<(String, i32)> {
 
 fn status() -> Result<(), anyhow::Error> {
     for project in get_running_projects()? {
-        println!("{} is running", project.display.unwrap_or(project.name));
+        println!("{} is running", project);
     }
 
     Ok(())
@@ -140,7 +141,7 @@ fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
     }
 
     for project in not_running {
-        eprintln!("Cannot stop project not running: {}", project.name);
+        eprintln!("Cannot stop project not running: {}", project);
     }
 
     let timeout = Duration::new(5, 0);
@@ -165,10 +166,7 @@ fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
     try_cleanup_state()?;
 
     for project in running_projects {
-        println!(
-            "Was not able to stop {}",
-            project.display.unwrap_or(project.name)
-        );
+        println!("Was not able to stop {}", project);
     }
 
     Ok(())
@@ -181,10 +179,7 @@ fn start(projects: Vec<Project>) -> Result<(), anyhow::Error> {
         .partition(|p| running_projects.iter().any(|rp| rp.name == p.name));
 
     for project in running {
-        eprintln!(
-            "{} is already running",
-            project.display.unwrap_or(project.name)
-        );
+        eprintln!("{} is already running", project);
     }
 
     let master_pid = sysinfo::get_current_pid().unwrap();
@@ -229,7 +224,7 @@ fn restart(projects: Vec<Project>) -> Result<(), anyhow::Error> {
         .partition(|p| running_projects.iter().any(|rp| rp.name == p.name));
 
     for project in filtered {
-        eprintln!("Cannot restart project not running: {}", project.name);
+        eprintln!("Cannot restart project not running: {}", project);
     }
 
     stop(projects.clone())?;
@@ -245,11 +240,7 @@ fn list() -> Result<(), anyhow::Error> {
     // Deserialize the TOML string into the Config struct
     let config: Config = toml::from_str(&config_string)?;
     for p in config.project {
-        if let Some(display) = p.display {
-            println!("{} ({})", display, p.name)
-        } else {
-            println!("{}", p.name)
-        }
+        println!("{}", p)
     }
 
     Ok(())
@@ -276,6 +267,26 @@ pub struct Project {
     display: Option<String>,
     stop_signal: Option<Signal>,
     envs: Option<HashMap<String, String>>,
+}
+
+impl Display for MinimalProject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(ref display) = self.display {
+            write!(f, "{} ({})", display, self.name)
+        } else {
+            write!(f, "{}", self.name)
+        }
+    }
+}
+
+impl Display for Project {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(ref display) = self.display {
+            write!(f, "{} ({})", display, self.name)
+        } else {
+            write!(f, "{}", self.name)
+        }
+    }
 }
 
 impl FromStr for Project {
