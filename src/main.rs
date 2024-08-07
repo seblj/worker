@@ -1,5 +1,4 @@
 use std::{
-    fmt::Display,
     fs::File,
     io::{BufRead, BufReader, Read},
     os::{
@@ -132,9 +131,8 @@ fn stop(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Err
             .filter(|rp| running.iter().any(|p| rp.name == p.name))
             .collect();
 
-        try_cleanup_state(config)?;
-
         if running_projects.is_empty() {
+            try_cleanup_state(config)?;
             return Ok(());
         }
     }
@@ -217,36 +215,6 @@ fn list(config: &WorkerConfig) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-impl Display for Project {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(ref display) = self.display {
-            write!(f, "{} ({})", display, self.name)
-        } else {
-            write!(f, "{}", self.name)
-        }
-    }
-}
-
-impl FromStr for Project {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let config = WorkerConfig::new()?;
-
-        let projects = config
-            .projects
-            .iter()
-            .map(|p| p.name.clone())
-            .collect::<Vec<String>>();
-
-        config
-            .projects
-            .into_iter()
-            .find(|it| it.name == s)
-            .with_context(|| format!("Valid projects are {:#?}", projects))
-    }
-}
-
 #[derive(Debug, Parser)]
 struct ActionArgs {
     projects: Vec<Project>,
@@ -283,15 +251,16 @@ struct Cli {
 }
 
 fn main() -> Result<(), anyhow::Error> {
-    // TODO: Maybe dedup the projects passed as arg to run maybe
     let args = Cli::parse();
 
     let config = WorkerConfig::new()?;
 
     match args.subcommand {
-        SubCommands::Start(args) => start(&config, args.projects)?,
-        SubCommands::Stop(args) => stop(&config, args.projects)?,
-        SubCommands::Restart(args) => restart(&config, args.projects)?,
+        SubCommands::Start(args) => start(&config, args.projects.into_iter().unique().collect())?,
+        SubCommands::Stop(args) => stop(&config, args.projects.into_iter().unique().collect())?,
+        SubCommands::Restart(args) => {
+            restart(&config, args.projects.into_iter().unique().collect())?
+        }
         SubCommands::Logs(log_args) => log(&config, log_args)?,
         SubCommands::Status => status(&config)?,
         SubCommands::List => list(&config)?,

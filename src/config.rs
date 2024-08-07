@@ -1,5 +1,6 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, fmt::Display, hash::Hash, path::PathBuf, str::FromStr};
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::libc::Signal;
@@ -11,7 +12,7 @@ pub struct Config {
     pub project: Vec<Project>,
 }
 
-#[derive(Deserialize, Clone, Debug, Serialize)]
+#[derive(Deserialize, Clone, Debug, Serialize, Eq, PartialEq)]
 pub struct Project {
     pub name: String,
     pub command: String,
@@ -22,6 +23,37 @@ pub struct Project {
 
     #[serde(skip_deserializing)]
     pub pid: Option<i32>,
+}
+
+impl Hash for Project {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state)
+    }
+}
+
+impl Display for Project {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(ref display) = self.display {
+            write!(f, "{} ({})", display, self.name)
+        } else {
+            write!(f, "{}", self.name)
+        }
+    }
+}
+
+impl FromStr for Project {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let config = WorkerConfig::new()?;
+        let projects: Vec<String> = config.projects.iter().map(|p| p.name.clone()).collect();
+
+        config
+            .projects
+            .into_iter()
+            .find(|it| it.name == s)
+            .with_context(|| format!("Valid projects are {:#?}", projects))
+    }
 }
 
 pub struct WorkerConfig {
