@@ -30,7 +30,6 @@ pub fn setsid() -> Result<libc::pid_t, i32> {
 pub fn daemon(config: &WorkerConfig, project: &Project) -> Result<Fork, i32> {
     match fork() {
         Ok(Fork::Child) => setsid().and_then(|sid| {
-            println!("sid in daemon: {}", sid);
             let filename = format!("{}-{}", project.name, sid);
             let state_file = config.state_dir.join(filename);
 
