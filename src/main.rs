@@ -14,8 +14,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{anyhow, Context};
 use clap::{command, Parser};
+use itertools::{Either, Itertools};
 use lazy_static::lazy_static;
 use libc::{daemon, has_processes_running, stop_pg, Fork, Signal};
 use serde::{Deserialize, Serialize};
@@ -46,18 +47,14 @@ fn try_cleanup_state() -> Result<(), anyhow::Error> {
 }
 
 // Try to get vec of running projects. Try to remove the state file if the process is not running
-fn get_running_projects() -> Result<Vec<MinimalProject>, anyhow::Error> {
+fn get_running_projects() -> Result<Vec<Project>, anyhow::Error> {
     let projects = std::fs::read_dir(STATE_DIR.as_path())?
         .filter_map(|entry| {
             let path = entry.ok()?.path();
             let (name, sid) = parse_state_filename(&path).ok()?;
-            let project = Project::from_str(&name).ok()?;
-            has_processes_running(sid).then_some(MinimalProject {
-                name,
-                display: project.display,
-                stop_signal: project.stop_signal,
-                pid: sid,
-            })
+            let mut project = Project::from_str(&name).ok()?;
+            project.pid = Some(sid);
+            has_processes_running(sid).then_some(project)
         })
         .collect::<Vec<_>>();
 
@@ -69,10 +66,7 @@ fn log(log_args: LogsArgs) -> Result<(), anyhow::Error> {
     let log_file = LOG_DIR.join(&log_args.project.name);
     let file = File::open(log_file).map_err(|_| {
         // If the log doesn't exist, it should mean that the project isn't running
-        anyhow!(
-            "{} is not running",
-            log_args.project.display.unwrap_or(log_args.project.name)
-        )
+        anyhow!("{} is not running", log_args.project)
     })?;
 
     let mut reader = BufReader::new(file);
@@ -80,18 +74,11 @@ fn log(log_args: LogsArgs) -> Result<(), anyhow::Error> {
 
     if log_args.follow {
         loop {
-            match reader.read_line(&mut buffer) {
-                Ok(0) => {
-                    // No new data, so wait before trying again
-                    sleep(Duration::from_secs(1));
-                }
-                Ok(_) => {
+            match reader.read_line(&mut buffer)? {
+                0 => sleep(Duration::from_secs(1)),
+                _ => {
                     print!("{}", buffer);
-                    buffer.clear(); // Clear the buffer after printing
-                }
-                Err(e) => {
-                    eprintln!("Error reading from file: {}", e);
-                    bail!(e)
+                    buffer.clear();
                 }
             }
         }
@@ -127,17 +114,17 @@ fn status() -> Result<(), anyhow::Error> {
 fn stop(projects: Vec<Project>) -> Result<(), anyhow::Error> {
     let running_projects = get_running_projects()?;
 
-    let (running, not_running): (Vec<_>, Vec<_>) = projects
-        .into_iter()
-        .partition(|rp| running_projects.iter().any(|p| p.name == rp.name));
+    // Partition map to get project with pid set
+    let (running, not_running): (Vec<_>, Vec<_>) = projects.into_iter().partition_map(|rp| {
+        match running_projects.iter().find(|p| p.name == rp.name) {
+            Some(p) => Either::Left(p.to_owned()),
+            None => Either::Right(rp),
+        }
+    });
 
     for project in running.iter() {
-        let p = running_projects
-            .iter()
-            .find(|it| it.name == project.name)
-            .unwrap();
         let signal = project.stop_signal.as_ref().unwrap_or(&Signal::SIGINT);
-        let _ = stop_pg(p.pid, signal);
+        let _ = stop_pg(project.pid.unwrap(), signal);
     }
 
     for project in not_running {
@@ -251,14 +238,6 @@ struct Config {
     project: Vec<Project>,
 }
 
-#[derive(Eq, PartialEq, Hash)]
-struct MinimalProject {
-    name: String,
-    display: Option<String>,
-    stop_signal: Option<Signal>,
-    pid: i32,
-}
-
 #[derive(Deserialize, Clone, Debug, Serialize)]
 pub struct Project {
     name: String,
@@ -267,16 +246,9 @@ pub struct Project {
     display: Option<String>,
     stop_signal: Option<Signal>,
     envs: Option<HashMap<String, String>>,
-}
 
-impl Display for MinimalProject {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(ref display) = self.display {
-            write!(f, "{} ({})", display, self.name)
-        } else {
-            write!(f, "{}", self.name)
-        }
-    }
+    #[serde(skip_deserializing)]
+    pid: Option<i32>,
 }
 
 impl Display for Project {
@@ -309,7 +281,7 @@ impl FromStr for Project {
             .project
             .into_iter()
             .find(|it| it.name == s)
-            .context(format!("Valid projects are {:?}", projects))
+            .with_context(|| format!("Valid projects are {:#?}", projects))
     }
 }
 
@@ -338,6 +310,7 @@ enum SubCommands {
     Logs(LogsArgs),
     /// Prints out a status of which projects is running. Accepts no additional flags or project(s)
     Status,
+    /// Prints out a list of available projects to run
     List,
 }
 
@@ -347,11 +320,11 @@ struct Cli {
     subcommand: SubCommands,
 }
 
-// Scan root directories until we hopefully find `.worker.toml` or `worker.toml`
+// Scan root directories until we hopefully find the config file
 pub fn find_config_file() -> Result<Option<PathBuf>, anyhow::Error> {
     let mut dir = std::env::current_dir()?;
     loop {
-        if dir.join(".worker.toml").exists() {
+        if dir.join(CONFIG_FILE).exists() {
             return Ok(Some(dir));
         }
         if let Some(parent) = dir.parent() {
