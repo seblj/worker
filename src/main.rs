@@ -13,7 +13,7 @@ use std::{
 
 use anyhow::{anyhow, Context};
 use clap::{command, Parser};
-use config::{Project, WorkerConfig};
+use config::{Project, RunningProject, WorkerConfig};
 use itertools::{Either, Itertools};
 use libc::{daemon, has_processes_running, stop_pg, Fork, Signal};
 
@@ -21,20 +21,16 @@ pub mod config;
 pub mod libc;
 
 // Try to get vec of running projects. Try to remove the state file if the process is not running
-fn get_running_projects(config: &WorkerConfig) -> Result<Vec<Project>, anyhow::Error> {
+fn get_running_projects(config: &WorkerConfig) -> Result<Vec<RunningProject>, anyhow::Error> {
     let projects = std::fs::read_dir(config.state_dir.as_path())?
         .filter_map(|entry| {
             let path = entry.ok()?.path();
-            let (name, pid) = path.file_name()?.to_str()?.rsplit_once('-')?;
-            let pid = pid.parse().ok()?;
-            let mut project = Project::from_str(name).ok()?;
-            project.pid = Some(pid);
-
-            if has_processes_running(pid) {
+            let project = RunningProject::from_str(path.file_name()?.to_str()?).ok()?;
+            if has_processes_running(project.pid) {
                 Some(project)
             } else {
                 let _ = std::fs::remove_file(&path);
-                let _ = std::fs::remove_file(config.log_dir.join(name));
+                let _ = std::fs::remove_file(config.log_dir.join(project.name));
                 None
             }
         })
@@ -97,7 +93,7 @@ fn stop(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Err
 
     for project in running.iter() {
         let signal = project.stop_signal.as_ref().unwrap_or(&Signal::SIGINT);
-        let _ = stop_pg(project.pid.unwrap(), signal);
+        let _ = stop_pg(project.pid, signal);
     }
 
     for project in not_running {

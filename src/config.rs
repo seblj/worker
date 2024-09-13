@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, hash::Hash, path::PathBuf, str::FromStr};
+use std::{collections::HashMap, hash::Hash, path::PathBuf, str::FromStr};
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,8 @@ pub struct Config {
     pub project: Vec<Project>,
 }
 
-#[derive(Deserialize, Clone, Debug, Serialize, Eq, PartialEq)]
+/// Project deserialized from config file
+#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub struct Project {
     pub name: String,
     pub command: String,
@@ -20,9 +21,18 @@ pub struct Project {
     pub display: Option<String>,
     pub stop_signal: Option<Signal>,
     pub envs: Option<HashMap<String, String>>,
+}
 
-    #[serde(skip_deserializing)]
-    pub pid: Option<i32>,
+/// Project with process id
+#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
+pub struct RunningProject {
+    pub name: String,
+    pub command: String,
+    pub cwd: String,
+    pub display: Option<String>,
+    pub stop_signal: Option<Signal>,
+    pub envs: Option<HashMap<String, String>>,
+    pub pid: i32,
 }
 
 impl Hash for Project {
@@ -31,28 +41,58 @@ impl Hash for Project {
     }
 }
 
-impl Display for Project {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(ref display) = self.display {
-            write!(f, "{} ({})", display, self.name)
-        } else {
-            write!(f, "{}", self.name)
+macro_rules! impl_display {
+    ($project:tt) => {
+        impl std::fmt::Display for $project {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                if let Some(ref display) = self.display {
+                    write!(f, "{} ({})", display, self.name)
+                } else {
+                    write!(f, "{}", self.name)
+                }
+            }
         }
-    }
+    };
+}
+
+impl_display!(Project);
+impl_display!(RunningProject);
+
+fn find_project(name: &str) -> Result<Project, anyhow::Error> {
+    let config = WorkerConfig::new()?;
+    let projects: Vec<String> = config.projects.iter().map(|p| p.name.clone()).collect();
+
+    config
+        .projects
+        .into_iter()
+        .find(|it| it.name == name)
+        .with_context(|| format!("Valid projects are {:#?}", projects))
 }
 
 impl FromStr for Project {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let config = WorkerConfig::new()?;
-        let projects: Vec<String> = config.projects.iter().map(|p| p.name.clone()).collect();
+        find_project(s)
+    }
+}
 
-        config
-            .projects
-            .into_iter()
-            .find(|it| it.name == s)
-            .with_context(|| format!("Valid projects are {:#?}", projects))
+impl FromStr for RunningProject {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (name, pid) = s.rsplit_once('-').context("No - in string")?;
+        let project = find_project(name)?;
+
+        Ok(RunningProject {
+            name: project.name,
+            command: project.command,
+            cwd: project.cwd,
+            display: project.display,
+            stop_signal: project.stop_signal,
+            envs: project.envs,
+            pid: pid.parse().context("Couldn't parse pid")?,
+        })
     }
 }
 
