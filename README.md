@@ -54,6 +54,7 @@ Commands:
   restart  Restarts the specified project(s). E.g. `worker restart foo bar` (Same as running stop and then start)
   logs     Print out logs for the specified project. Additionally accepts `-f` to follow the log. E.g. `worker logs foo`
   status   Prints out a status of which projects is running. Accepts no additional flags or project(s)
+  list     Prints out a list of available projects to run
   help     Print this message or the help of the given subcommand(s)
 
 Options:
