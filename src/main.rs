@@ -147,7 +147,7 @@ fn stop(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Err
     try_cleanup_state(config)?;
 
     for project in running_projects {
-        println!("Was not able to stop {}", project);
+        eprintln!("Was not able to stop {}", project);
     }
 
     Ok(())
