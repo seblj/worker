@@ -5,7 +5,6 @@ use std::{
         fd::{FromRawFd, IntoRawFd},
         unix::process::CommandExt,
     },
-    path::Path,
     process::Stdio,
     str::FromStr,
     thread::sleep,
@@ -21,28 +20,23 @@ use libc::{daemon, has_processes_running, stop_pg, Fork, Signal};
 pub mod config;
 pub mod libc;
 
-fn try_cleanup_state(config: &WorkerConfig) -> Result<(), anyhow::Error> {
-    for entry in std::fs::read_dir(config.state_dir.as_path())? {
-        let path = entry?.path();
-        let (name, sid) = parse_state_filename(&path)?;
-        if !has_processes_running(sid) {
-            let _ = std::fs::remove_file(path);
-            let _ = std::fs::remove_file(config.log_dir.join(name));
-        }
-    }
-
-    Ok(())
-}
-
 // Try to get vec of running projects. Try to remove the state file if the process is not running
 fn get_running_projects(config: &WorkerConfig) -> Result<Vec<Project>, anyhow::Error> {
     let projects = std::fs::read_dir(config.state_dir.as_path())?
         .filter_map(|entry| {
             let path = entry.ok()?.path();
-            let (name, sid) = parse_state_filename(&path).ok()?;
-            let mut project = Project::from_str(&name).ok()?;
-            project.pid = Some(sid);
-            has_processes_running(sid).then_some(project)
+            let (name, pid) = path.file_name()?.to_str()?.rsplit_once('-')?;
+            let pid = pid.parse().ok()?;
+            let mut project = Project::from_str(name).ok()?;
+            project.pid = Some(pid);
+
+            if has_processes_running(pid) {
+                Some(project)
+            } else {
+                let _ = std::fs::remove_file(&path);
+                let _ = std::fs::remove_file(config.log_dir.join(name));
+                None
+            }
         })
         .collect::<Vec<_>>();
 
@@ -59,10 +53,7 @@ fn log(config: &WorkerConfig, log_args: LogsArgs) -> Result<(), anyhow::Error> {
     }
 
     let log_file = config.log_dir.join(&log_args.project.name);
-    let file = File::open(log_file).map_err(|_| {
-        // If the log doesn't exist, it should mean that the project isn't running
-        anyhow!("{} is not running", log_args.project)
-    })?;
+    let file = File::open(log_file).expect("Log file should exist");
 
     let mut reader = BufReader::new(file);
     let mut buffer = String::new();
@@ -83,19 +74,6 @@ fn log(config: &WorkerConfig, log_args: LogsArgs) -> Result<(), anyhow::Error> {
     }
 
     Ok(())
-}
-
-fn parse_state_filename(path: &Path) -> anyhow::Result<(String, i32)> {
-    let (name, pid) = path
-        .file_name()
-        .context("No filename")?
-        .to_str()
-        .context("Invalid unicode filename")?
-        .rsplit_once('-')
-        .context("File doesn't contain -")?;
-
-    let pid = pid.parse::<i32>().context("Couldn't parse pid to i32")?;
-    Ok((name.to_string(), pid))
 }
 
 fn status(config: &WorkerConfig) -> Result<(), anyhow::Error> {
@@ -129,26 +107,24 @@ fn stop(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Err
     let timeout = Duration::new(5, 0);
     let start = Instant::now();
 
-    let mut running_projects = Vec::new();
     while Instant::now().duration_since(start) < timeout {
         // Get all running projects and filter them on projects we are trying to stop.
         // If some of them are still running, we should print out a message that we failed to stop them
-        running_projects = get_running_projects(config)?
-            .into_iter()
+        let num_running = get_running_projects(config)?
+            .iter()
             .filter(|rp| running.iter().any(|p| rp.name == p.name))
-            .collect();
+            .count();
 
-        if running_projects.is_empty() {
-            try_cleanup_state(config)?;
+        if num_running == 0 {
             return Ok(());
         }
     }
 
-    try_cleanup_state(config)?;
-
-    for project in running_projects {
-        eprintln!("Was not able to stop {}", project);
-    }
+    get_running_projects(config)?.iter().for_each(|rp| {
+        if running.iter().any(|p| rp.name == p.name) {
+            eprintln!("Was not able to stop {}", rp);
+        }
+    });
 
     Ok(())
 }
