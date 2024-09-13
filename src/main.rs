@@ -51,6 +51,13 @@ fn get_running_projects(config: &WorkerConfig) -> Result<Vec<Project>, anyhow::E
 
 // TODO: Should not read the entire file. Should only read last x lines or something
 fn log(config: &WorkerConfig, log_args: LogsArgs) -> Result<(), anyhow::Error> {
+    if !get_running_projects(config)?
+        .iter()
+        .any(|it| it.name == log_args.project.name)
+    {
+        return Err(anyhow!("{} is not running", log_args.project));
+    }
+
     let log_file = config.log_dir.join(&log_args.project.name);
     let file = File::open(log_file).map_err(|_| {
         // If the log doesn't exist, it should mean that the project isn't running
