@@ -16,9 +16,7 @@ pub enum WorkerTestProject {
 
 pub struct WorkerTestConfig {
     path: TempDir,
-    project1: String,
-    project2: String,
-    project3: String,
+    projects: [String; 3],
     unique_id: String,
 }
 
@@ -30,14 +28,16 @@ impl Default for WorkerTestConfig {
 
 impl WorkerTestConfig {
     pub fn new() -> Self {
-        let path = TempDir::new().unwrap();
         let unique_id = Uuid::new_v4().to_string();
+        let path = TempDir::with_prefix(&unique_id).unwrap();
 
         let mock_worker_path = cargo_bin("mock_worker").to_string_lossy().to_string();
 
-        let project1 = format!("{} {} 5", mock_worker_path, unique_id);
-        let project2 = format!("{} {} 6", mock_worker_path, unique_id);
-        let project3 = format!("{} {} 7", mock_worker_path, unique_id);
+        let projects = [
+            format!("{} 5 {}", mock_worker_path, unique_id),
+            format!("{} 6 {}", mock_worker_path, unique_id),
+            format!("{} 7 {}", mock_worker_path, unique_id),
+        ];
 
         // Create the .worker.toml file
         std::fs::write(
@@ -46,28 +46,27 @@ impl WorkerTestConfig {
                 r#"
             [[project]]
             name = "project-1-{unique_id}"
-            command = "{project1}"
+            command = "{}"
             cwd = "/"
 
             [[project]]
             name = "project-2-{unique_id}"
-            command = "{project2}"
+            command = "{}"
             cwd = "/"
 
             [[project]]
             name = "project-3-{unique_id}"
-            command = "{project3}"
+            command = "{}"
             cwd = "/"
             "#,
+                projects[0], projects[1], projects[2],
             ),
         )
         .unwrap();
 
         WorkerTestConfig {
             path,
-            project1,
-            project2,
-            project3,
+            projects,
             unique_id,
         }
     }
@@ -114,7 +113,7 @@ impl WorkerTestConfig {
         self.run("status", None)
     }
 
-    pub fn get_state_file(
+    pub fn state_file(
         &self,
         project: WorkerTestProject,
     ) -> Option<Result<DirEntry, std::io::Error>> {
@@ -144,20 +143,16 @@ impl WorkerTestConfig {
 
     pub fn pids(&self, project: WorkerTestProject) -> Vec<Pid> {
         // Verify that the process is running using sysinfo
-        let mut system = System::new_all();
-        system.refresh_all();
-
-        let processes = system.processes();
-
         let cmd = match project {
-            WorkerTestProject::One => self.project1.split_whitespace(),
-            WorkerTestProject::Two => self.project2.split_whitespace(),
-            WorkerTestProject::Three => self.project3.split_whitespace(),
+            WorkerTestProject::One => self.projects[0].split_whitespace(),
+            WorkerTestProject::Two => self.projects[1].split_whitespace(),
+            WorkerTestProject::Three => self.projects[2].split_whitespace(),
             WorkerTestProject::Unknown => unreachable!(),
         }
         .collect::<Vec<_>>();
 
-        processes
+        System::new_all()
+            .processes()
             .values()
             .filter_map(|p| if p.cmd() == cmd { Some(p.pid()) } else { None })
             .collect()

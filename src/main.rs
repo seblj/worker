@@ -16,7 +16,7 @@ use anyhow::{anyhow, Context};
 use clap::{command, Parser};
 use config::{Project, RunningProject, WorkerConfig};
 use itertools::{Either, Itertools};
-use libc::{daemon, has_processes_running, stop_pg, Fork, Signal};
+use libc::{fork, has_processes_running, setsid, stop_pg, waitpid, Fork, Signal};
 
 pub mod config;
 pub mod libc;
@@ -136,35 +136,45 @@ fn start(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Er
         eprintln!("{} is already running", project);
     }
 
-    let master_pid = sysinfo::get_current_pid().unwrap();
     for project in not_running {
-        if let Fork::Child = daemon(config, &project)
-            .map_err(|e| anyhow!("Error: {} on daemon: {:?}", e, project))?
-        {
-            let tmp_file = config.log_dir.join(&project.name);
-            let f = File::create(tmp_file)?;
+        match fork().expect("Couldn't fork") {
+            Fork::Parent(p) => {
+                waitpid(p).unwrap();
+            }
+            Fork::Child => {
+                let sid = setsid().expect("Couldn't setsid");
+                let filename = format!("{}-{}", project.name, sid);
+                let state_file = config.state_dir.join(filename);
 
-            // Create a raw filedescriptor to use to merge stdout and stderr
-            let fd = f.into_raw_fd();
+                let file = File::create(state_file).expect("Couldn't create state file");
+                serde_json::to_writer(file, &project).expect("Couldn't write to state file");
 
-            let parts = shlex::split(&project.command)
-                .context(format!("Couldn't parse command: {}", project.command))?;
+                match fork().expect("Couldn't fork inner") {
+                    Fork::Parent(_) => {
+                        std::process::exit(0);
+                    }
+                    Fork::Child => {
+                        let tmp_file = config.log_dir.join(&project.name);
+                        let f = File::create(tmp_file)?;
 
-            std::process::Command::new(&parts[0])
-                .args(&parts[1..])
-                .envs(project.envs.unwrap_or_default())
-                .current_dir(project.cwd)
-                .stdout(unsafe { Stdio::from_raw_fd(fd) })
-                .stderr(unsafe { Stdio::from_raw_fd(fd) })
-                .stdin(Stdio::null())
-                .exec();
-        }
+                        // Create a raw filedescriptor to use to merge stdout and stderr
+                        let fd = f.into_raw_fd();
 
-        // Prevent trying to start a project multiple times
-        let current_pid = sysinfo::get_current_pid().unwrap();
-        if current_pid != master_pid {
-            break;
-        }
+                        let parts = shlex::split(&project.command)
+                            .context(format!("Couldn't parse command: {}", project.command))?;
+
+                        std::process::Command::new(&parts[0])
+                            .args(&parts[1..])
+                            .envs(project.envs.unwrap_or_default())
+                            .current_dir(project.cwd)
+                            .stdout(unsafe { Stdio::from_raw_fd(fd) })
+                            .stderr(unsafe { Stdio::from_raw_fd(fd) })
+                            .stdin(Stdio::null())
+                            .exec();
+                    }
+                };
+            }
+        };
     }
 
     Ok(())

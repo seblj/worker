@@ -1,9 +1,5 @@
-use std::fs::File;
-
 use serde::{Deserialize, Serialize};
 use sysinfo::System;
-
-use crate::{config::WorkerConfig, Project};
 
 pub enum Fork {
     Parent(libc::pid_t),
@@ -27,17 +23,13 @@ pub fn setsid() -> Result<libc::pid_t, i32> {
     }
 }
 
-pub fn daemon(config: &WorkerConfig, project: &Project) -> Result<Fork, i32> {
-    match fork() {
-        Ok(Fork::Child) => setsid().and_then(|sid| {
-            let filename = format!("{}-{}", project.name, sid);
-            let state_file = config.state_dir.join(filename);
+pub fn waitpid(pid: i32) -> Result<libc::pid_t, i32> {
+    let mut status: i32 = 0;
+    let res = unsafe { libc::waitpid(pid, &mut status, 0) };
 
-            let file = File::create(state_file).expect("Couldn't create state file");
-            serde_json::to_writer(file, project).expect("Couldn't write to state file");
-            fork()
-        }),
-        x => x,
+    match res {
+        -1 => Err(-1),
+        res => Ok(res),
     }
 }
 

@@ -18,8 +18,7 @@ fn test_restart_success() {
     cmd.assert().success();
 
     // Verify that the state file exists
-    let state_file = worker.get_state_file(project);
-    assert!(state_file.is_some());
+    assert!(worker.state_file(project).is_some());
 
     let pid = worker.pids(project)[0];
 
@@ -27,8 +26,7 @@ fn test_restart_success() {
     cmd.assert().success();
 
     // Verify that the state file exists
-    let state_file = worker.get_state_file(project);
-    assert!(state_file.is_some());
+    assert!(worker.state_file(project).is_some());
 
     let new_pid = worker.pids(project)[0];
 
@@ -75,7 +73,6 @@ fn test_restart_multiple_only_one_running() {
     assert_ne!(pid1, new_pid1);
 
     // Verify that the project that wasn't running is not started
-    let state_file = worker.get_state_file(project2);
-    assert!(state_file.is_none());
+    assert!(worker.state_file(project2).is_none());
     assert_eq!(worker.pids(project2).len(), 0);
 }

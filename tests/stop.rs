@@ -35,8 +35,7 @@ fn test_stop_success() {
     let mut cmd = worker.stop(&[project]);
     cmd.assert().success();
 
-    let state_file = worker.get_state_file(project);
-    assert!(state_file.is_none());
+    assert!(worker.state_file(project).is_none());
     assert_eq!(worker.pids(project).len(), 0);
 }
 
@@ -54,12 +53,10 @@ fn test_stop_multiple_success() {
     let mut cmd = worker.stop(&[project2, project3]);
     cmd.assert().success();
 
-    let state_file = worker.get_state_file(project2);
-    assert!(state_file.is_none());
+    assert!(worker.state_file(project2).is_none());
     assert_eq!(worker.pids(project2).len(), 0);
 
-    let state_file = worker.get_state_file(project3);
-    assert!(state_file.is_none());
+    assert!(worker.state_file(project3).is_none());
     assert_eq!(worker.pids(project3).len(), 0);
 }
 
@@ -77,8 +74,7 @@ fn test_stop_multiple_one_already_stopped() {
     let mut cmd = worker.stop(&[project2]);
     cmd.assert().success();
 
-    let state_file = worker.get_state_file(project2);
-    assert!(state_file.is_none());
+    assert!(worker.state_file(project2).is_none());
     assert_eq!(worker.pids(project2).len(), 0);
 
     // Stop the projects
@@ -86,11 +82,9 @@ fn test_stop_multiple_one_already_stopped() {
     cmd.assert().success();
 
     // Assert that the project is still stopped
-    let state_file = worker.get_state_file(project2);
-    assert!(state_file.is_none());
+    assert!(worker.state_file(project2).is_none());
     assert_eq!(worker.pids(project2).len(), 0);
 
-    let state_file = worker.get_state_file(project3);
-    assert!(state_file.is_none());
+    assert!(worker.state_file(project3).is_none());
     assert_eq!(worker.pids(project3).len(), 0);
 }

@@ -1,5 +1,6 @@
+use std::time::{Duration, Instant};
+
 use common::{WorkerTestConfig, WorkerTestProject};
-use predicates::prelude::predicate;
 
 mod common;
 
@@ -16,12 +17,19 @@ fn test_logs_success() {
     let mut cmd = worker.start(&[WorkerTestProject::One]);
     cmd.assert().success();
 
-    // Need to sleep a little bit for the program to be able to start
-    std::thread::sleep(std::time::Duration::from_secs(1));
+    let timeout = Duration::new(1, 0);
+    let start = Instant::now();
 
-    let mut cmd = worker.logs(WorkerTestProject::One);
-    cmd.assert().success();
-    cmd.assert().stdout(predicate::str::contains(
-        "Hello from program started from worker!",
-    ));
+    // Try multiple times since it may not output immediately
+    while Instant::now().duration_since(start) < timeout {
+        let mut cmd = worker.logs(WorkerTestProject::One);
+        cmd.assert().success();
+
+        let output = &cmd.output().unwrap().stdout;
+        let stdout = std::str::from_utf8(output).unwrap();
+        if stdout.contains("Hello from program started from worker!") {
+            return;
+        }
+    }
+    unreachable!("Couldn't find output in 1 second")
 }
