@@ -113,23 +113,18 @@ impl WorkerTestConfig {
         self.run("status", None)
     }
 
-    pub fn state_file(
-        &self,
-        project: WorkerTestProject,
-    ) -> Option<Result<DirEntry, std::io::Error>> {
-        self.path
-            .path()
-            .join(".worker/state")
-            .read_dir()
-            .unwrap()
-            .find(|entry| {
-                entry
-                    .as_ref()
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .contains(&self.project_name(&project))
-            })
+    pub fn state_file(&self, project: WorkerTestProject) -> Option<DirEntry> {
+        let dir = self.path.path().join(".worker/state").read_dir().unwrap();
+
+        for entry in dir.into_iter() {
+            let entry = entry.unwrap();
+            let name = &self.project_name(&project);
+            if entry.file_name().to_string_lossy().contains(name) {
+                return Some(entry);
+            }
+        }
+
+        None
     }
 
     pub fn project_name(&self, project: &WorkerTestProject) -> String {
