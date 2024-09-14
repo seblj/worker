@@ -5,7 +5,7 @@ edition = "2021"
 
 [[bin]]
 name = "mock_worker"
-path = "tests/bin/mock_worker.rs"
+path = "tests/src/mock_worker.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
