@@ -104,17 +104,18 @@ pub struct WorkerConfig {
 
 impl WorkerConfig {
     pub fn new() -> Result<Self, anyhow::Error> {
-        let config_dir = find_config_dir()
-            .expect("Couldn't get current dir")
-            .expect("Couldn't find config dir");
+        let base_dir = find_config_dir()?.context("Couldn't find config dir")?;
+        Self::new_with_base_dir(base_dir)
+    }
 
-        let config_string = std::fs::read_to_string(config_dir.join(CONFIG_FILE))?;
+    pub fn new_with_base_dir(base_dir: PathBuf) -> Result<Self, anyhow::Error> {
+        let config_string = std::fs::read_to_string(base_dir.join(CONFIG_FILE))?;
 
-        let state_dir = config_dir.join(".worker/state");
-        let log_dir = config_dir.join(".worker/log");
+        let state_dir = base_dir.join(".worker/state");
+        let log_dir = base_dir.join(".worker/log");
 
-        std::fs::create_dir_all(state_dir.as_path())?;
-        std::fs::create_dir_all(log_dir.as_path())?;
+        std::fs::create_dir_all(&state_dir)?;
+        std::fs::create_dir_all(&log_dir)?;
 
         // Deserialize the TOML string into the Config struct
         let config: Config = toml::from_str(&config_string)?;

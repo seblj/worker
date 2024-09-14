@@ -3,6 +3,10 @@ name = "worker"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "mock_worker"
+path = "tests/bin/mock_worker.rs"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -15,3 +19,10 @@ shlex = "1.3.0"
 sysinfo = "0.31.2"
 toml = "0.8.12"
 itertools = "0.13.0"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+assert_fs = "1.0"
+tempfile = "3.3"
+uuid = { version = "1.10.0", features = ["v4"]}
