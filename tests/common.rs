@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::fs::DirEntry;
 
 use assert_cmd::{cargo::cargo_bin, Command};
@@ -7,9 +8,9 @@ use uuid::Uuid;
 
 #[derive(Clone, Copy)]
 pub enum WorkerTestProject {
-    Project1,
-    Project2,
-    Project3,
+    One,
+    Two,
+    Three,
     Unknown,
 }
 
@@ -71,30 +72,46 @@ impl WorkerTestConfig {
         }
     }
 
-    fn run(&self, command: &str, projects: &[WorkerTestProject]) -> Command {
+    fn run(&self, command: &str, projects: Option<&[WorkerTestProject]>) -> Command {
         let mut cmd = Command::cargo_bin("worker").unwrap();
-        let projects = projects
-            .iter()
-            .map(|p| self.project_name(p))
-            .collect::<Vec<_>>();
         cmd.current_dir(&self.path)
             .arg("--base-dir")
             .arg(self.path.path())
-            .arg(command)
-            .args(&projects);
+            .arg(command);
+
+        if let Some(projects) = projects {
+            let projects = projects
+                .iter()
+                .map(|p| self.project_name(p))
+                .collect::<Vec<_>>();
+            cmd.args(&projects);
+        }
+
         cmd
     }
 
     pub fn start(&self, projects: &[WorkerTestProject]) -> Command {
-        self.run("start", projects)
+        self.run("start", Some(projects))
+    }
+
+    pub fn logs(&self, projects: WorkerTestProject) -> Command {
+        self.run("logs", Some(&[projects]))
     }
 
     pub fn restart(&self, projects: &[WorkerTestProject]) -> Command {
-        self.run("restart", projects)
+        self.run("restart", Some(projects))
     }
 
     pub fn stop(&self, projects: &[WorkerTestProject]) -> Command {
-        self.run("stop", projects)
+        self.run("stop", Some(projects))
+    }
+
+    pub fn list(&self) -> Command {
+        self.run("list", None)
+    }
+
+    pub fn status(&self) -> Command {
+        self.run("status", None)
     }
 
     pub fn get_state_file(
@@ -118,9 +135,9 @@ impl WorkerTestConfig {
 
     pub fn project_name(&self, project: &WorkerTestProject) -> String {
         match project {
-            WorkerTestProject::Project1 => format!("project-1-{}", self.unique_id),
-            WorkerTestProject::Project2 => format!("project-2-{}", self.unique_id),
-            WorkerTestProject::Project3 => format!("project-3-{}", self.unique_id),
+            WorkerTestProject::One => format!("project-1-{}", self.unique_id),
+            WorkerTestProject::Two => format!("project-2-{}", self.unique_id),
+            WorkerTestProject::Three => format!("project-3-{}", self.unique_id),
             WorkerTestProject::Unknown => "unknown".into(),
         }
     }
@@ -133,9 +150,9 @@ impl WorkerTestConfig {
         let processes = system.processes();
 
         let cmd = match project {
-            WorkerTestProject::Project1 => self.project1.split_whitespace(),
-            WorkerTestProject::Project2 => self.project2.split_whitespace(),
-            WorkerTestProject::Project3 => self.project3.split_whitespace(),
+            WorkerTestProject::One => self.project1.split_whitespace(),
+            WorkerTestProject::Two => self.project2.split_whitespace(),
+            WorkerTestProject::Three => self.project3.split_whitespace(),
             WorkerTestProject::Unknown => unreachable!(),
         }
         .collect::<Vec<_>>();
