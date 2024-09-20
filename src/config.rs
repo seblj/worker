@@ -1,9 +1,9 @@
-use std::{collections::HashMap, hash::Hash, path::PathBuf, str::FromStr};
+use std::{collections::HashMap, fs::File, hash::Hash, path::PathBuf, str::FromStr};
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-use crate::libc::Signal;
+use crate::libc::{has_processes_running, Signal};
 
 const CONFIG_FILE: &str = ".worker.toml";
 
@@ -98,8 +98,8 @@ impl FromStr for RunningProject {
 
 pub struct WorkerConfig {
     pub projects: Vec<Project>,
-    pub state_dir: PathBuf,
-    pub log_dir: PathBuf,
+    state_dir: PathBuf,
+    log_dir: PathBuf,
 }
 
 impl WorkerConfig {
@@ -125,6 +125,39 @@ impl WorkerConfig {
             state_dir,
             log_dir,
         })
+    }
+
+    pub fn log_file(&self, project: &Project) -> PathBuf {
+        self.log_dir.join(&project.name)
+    }
+
+    pub fn store_state(&self, pid: i32, project: &Project) -> Result<(), anyhow::Error> {
+        let filename = format!("{}-{}", project.name, pid);
+        let state_file = self.state_dir.join(filename);
+
+        let file = File::create(state_file).expect("Couldn't create state file");
+        serde_json::to_writer(file, &project).expect("Couldn't write to state file");
+
+        Ok(())
+    }
+
+    // Try to get vec of running projects. Try to remove the state file if the process is not running
+    pub fn running(&self) -> Result<Vec<RunningProject>, anyhow::Error> {
+        let projects = std::fs::read_dir(self.state_dir.as_path())?
+            .filter_map(|entry| {
+                let path = entry.ok()?.path();
+                let project = RunningProject::from_str(path.file_name()?.to_str()?).ok()?;
+                if has_processes_running(project.pid) {
+                    Some(project)
+                } else {
+                    let _ = std::fs::remove_file(&path);
+                    let _ = std::fs::remove_file(self.log_dir.join(project.name));
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        Ok(projects)
     }
 }
 
