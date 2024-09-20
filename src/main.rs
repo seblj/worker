@@ -41,7 +41,7 @@ fn get_running_projects(config: &WorkerConfig) -> Result<Vec<RunningProject>, an
 }
 
 // TODO: Should not read the entire file. Should only read last x lines or something
-fn log(config: &WorkerConfig, log_args: LogsArgs) -> Result<(), anyhow::Error> {
+fn logs(config: &WorkerConfig, log_args: LogsArgs) -> Result<(), anyhow::Error> {
     if !get_running_projects(config)?
         .iter()
         .any(|it| it.name == log_args.project.name)
@@ -73,9 +73,13 @@ fn log(config: &WorkerConfig, log_args: LogsArgs) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn status(config: &WorkerConfig) -> Result<(), anyhow::Error> {
+fn status(config: &WorkerConfig, status_args: StatusArgs) -> Result<(), anyhow::Error> {
     for project in get_running_projects(config)? {
-        println!("{} is running", project);
+        if status_args.quiet {
+            println!("{}", project.name);
+        } else {
+            println!("{} is running", project);
+        }
     }
 
     Ok(())
@@ -197,9 +201,13 @@ fn restart(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::
     Ok(())
 }
 
-fn list(config: &WorkerConfig) -> Result<(), anyhow::Error> {
+fn list(config: &WorkerConfig, list_args: ListArgs) -> Result<(), anyhow::Error> {
     for p in config.projects.iter() {
-        println!("{}", p)
+        if list_args.quiet {
+            println!("{}", p.name)
+        } else {
+            println!("{}", p)
+        }
     }
 
     Ok(())
@@ -217,21 +225,33 @@ struct LogsArgs {
     follow: bool,
 }
 
+#[derive(Debug, Parser)]
+struct StatusArgs {
+    #[arg(short, long, help = "Only print name of the project")]
+    quiet: bool,
+}
+
+#[derive(Debug, Parser)]
+struct ListArgs {
+    #[arg(short, long, help = "Only print name of the project")]
+    quiet: bool,
+}
+
 #[derive(Parser, Debug)]
 enum SubCommands {
-    /// Starts the specified project(s). E.g. `worker start foo bar`
+    /// Start the specified project(s). E.g. `worker start foo bar`
     Start(ActionArgs),
-    /// Stops the specified project(s). E.g. `worker stop foo bar`
+    /// Stop the specified project(s). E.g. `worker stop foo bar`
     Stop(ActionArgs),
-    /// Restarts the specified project(s). E.g. `worker restart foo bar` (Same as running stop and then start)
+    /// Restart the specified project(s). E.g. `worker restart foo bar` (Same as running stop and then start)
     Restart(ActionArgs),
     /// Print out logs for the specified project.
     /// Additionally accepts `-f` to follow the log. E.g. `worker logs foo`
     Logs(LogsArgs),
-    /// Prints out a status of which projects is running. Accepts no additional flags or project(s)
-    Status,
-    /// Prints out a list of available projects to run
-    List,
+    /// Print out a status of which projects is running
+    Status(StatusArgs),
+    /// Print out a list of available projects to run
+    List(ListArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -258,9 +278,9 @@ fn main() -> Result<(), anyhow::Error> {
         SubCommands::Restart(args) => {
             restart(&config, args.projects.into_iter().unique().collect())?
         }
-        SubCommands::Logs(log_args) => log(&config, log_args)?,
-        SubCommands::Status => status(&config)?,
-        SubCommands::List => list(&config)?,
+        SubCommands::Logs(log_args) => logs(&config, log_args)?,
+        SubCommands::Status(status_args) => status(&config, status_args)?,
+        SubCommands::List(list_args) => list(&config, list_args)?,
     }
 
     Ok(())
