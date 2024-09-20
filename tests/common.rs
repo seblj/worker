@@ -73,10 +73,7 @@ impl WorkerTestConfig {
 
     fn run(&self, command: &str, projects: Option<&[WorkerTestProject]>) -> Command {
         let mut cmd = Command::cargo_bin("worker").unwrap();
-        cmd.current_dir(&self.path)
-            .arg("--base-dir")
-            .arg(self.path.path())
-            .arg(command);
+        cmd.current_dir(&self.path).arg(command);
 
         if let Some(projects) = projects {
             let projects = projects

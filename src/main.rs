@@ -5,7 +5,6 @@ use std::{
         fd::{FromRawFd, IntoRawFd},
         unix::process::CommandExt,
     },
-    path::PathBuf,
     process::Stdio,
     thread::sleep,
     time::{Duration, Instant},
@@ -215,19 +214,12 @@ enum SubCommands {
 struct Cli {
     #[command(subcommand)]
     subcommand: SubCommands,
-
-    #[arg(long)]
-    base_dir: Option<PathBuf>,
 }
 
 fn main() -> Result<(), anyhow::Error> {
     let args = Cli::parse();
 
-    let config = if let Some(base_dir) = args.base_dir {
-        WorkerConfig::new_with_base_dir(base_dir)?
-    } else {
-        WorkerConfig::new()?
-    };
+    let config = WorkerConfig::new()?;
 
     match args.subcommand {
         SubCommands::Start(args) => start(&config, args.projects.into_iter().unique().collect())?,

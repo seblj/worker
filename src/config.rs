@@ -126,10 +126,6 @@ pub struct WorkerConfig {
 impl WorkerConfig {
     pub fn new() -> Result<Self, anyhow::Error> {
         let base_dir = find_config_dir()?.context("Couldn't find config dir")?;
-        Self::new_with_base_dir(base_dir)
-    }
-
-    pub fn new_with_base_dir(base_dir: PathBuf) -> Result<Self, anyhow::Error> {
         let config_string = std::fs::read_to_string(base_dir.join(CONFIG_FILE))?;
 
         let state_dir = base_dir.join(".worker/state");
