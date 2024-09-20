@@ -14,19 +14,15 @@ use std::{
 use anyhow::{anyhow, Context};
 use clap::{command, Parser};
 use config::{Project, WorkerConfig};
-use itertools::{Either, Itertools};
-use libc::{fork, setsid, stop_pg, waitpid, Fork, Signal};
+use itertools::Itertools;
+use libc::{fork, setsid, waitpid, Fork};
 
 pub mod config;
 pub mod libc;
 
 // TODO: Should not read the entire file. Should only read last x lines or something
 fn logs(config: &WorkerConfig, log_args: LogsArgs) -> Result<(), anyhow::Error> {
-    if !config
-        .running()?
-        .iter()
-        .any(|it| it.name == log_args.project.name)
-    {
+    if !config.is_running(&log_args.project)? {
         return Err(anyhow!("{} is not running", log_args.project));
     }
 
@@ -67,19 +63,10 @@ fn status(config: &WorkerConfig, status_args: StatusArgs) -> Result<(), anyhow::
 }
 
 fn stop(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Error> {
-    let running_projects = config.running()?;
-
-    // Partition map to get project with pid set
-    let (running, not_running): (Vec<_>, Vec<_>) = projects.into_iter().partition_map(|rp| {
-        match running_projects.iter().find(|p| p.name == rp.name) {
-            Some(p) => Either::Left(p.to_owned()),
-            None => Either::Right(rp),
-        }
-    });
+    let (running, not_running) = config.partition_projects(projects)?;
 
     for project in running.iter() {
-        let signal = project.stop_signal.as_ref().unwrap_or(&Signal::SIGINT);
-        let _ = stop_pg(project.pid, signal);
+        project.stop()?;
     }
 
     for project in not_running {
@@ -95,7 +82,7 @@ fn stop(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Err
         let num_running = config
             .running()?
             .iter()
-            .filter(|rp| running.iter().any(|p| rp.name == p.name))
+            .filter(|rp| running.contains(rp))
             .count();
 
         if num_running == 0 {
@@ -113,10 +100,7 @@ fn stop(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Err
 }
 
 fn start(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Error> {
-    let running_projects = config.running()?;
-    let (running, not_running): (Vec<_>, Vec<_>) = projects
-        .into_iter()
-        .partition(|p| running_projects.iter().any(|rp| rp.name == p.name));
+    let (running, not_running) = config.partition_projects(projects)?;
 
     for project in running {
         eprintln!("{} is already running", project);
@@ -132,9 +116,7 @@ fn start(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Er
                 config.store_state(sid, &project)?;
 
                 match fork().expect("Couldn't fork inner") {
-                    Fork::Parent(_) => {
-                        std::process::exit(0);
-                    }
+                    Fork::Parent(_) => std::process::exit(0),
                     Fork::Child => {
                         let tmp_file = config.log_file(&project);
                         let f = File::create(tmp_file)?;
@@ -163,11 +145,8 @@ fn start(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Er
 }
 
 fn restart(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Error> {
-    let running_projects = config.running()?;
-
-    let (projects, filtered): (Vec<_>, Vec<_>) = projects
-        .into_iter()
-        .partition(|p| running_projects.iter().any(|rp| rp.name == p.name));
+    let (projects, filtered) = config.partition_projects(projects)?;
+    let projects: Vec<Project> = projects.into_iter().map(|p| p.into()).collect();
 
     for project in filtered {
         eprintln!("Cannot restart project not running: {}", project);

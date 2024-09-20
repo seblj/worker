@@ -1,9 +1,10 @@
 use std::{collections::HashMap, fs::File, hash::Hash, path::PathBuf, str::FromStr};
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
+use itertools::{Either, Itertools};
 use serde::{Deserialize, Serialize};
 
-use crate::libc::{has_processes_running, Signal};
+use crate::libc::{has_processes_running, stop_pg, Signal};
 
 const CONFIG_FILE: &str = ".worker.toml";
 
@@ -69,6 +70,19 @@ fn find_project(name: &str) -> Result<Project, anyhow::Error> {
         .with_context(|| format!("Valid projects are {:#?}", projects))
 }
 
+impl From<RunningProject> for Project {
+    fn from(value: RunningProject) -> Self {
+        Self {
+            name: value.name,
+            command: value.command,
+            cwd: value.cwd,
+            display: value.display,
+            stop_signal: value.stop_signal,
+            envs: value.envs,
+        }
+    }
+}
+
 impl FromStr for Project {
     type Err = anyhow::Error;
 
@@ -93,6 +107,13 @@ impl FromStr for RunningProject {
             envs: project.envs,
             pid: pid.parse().context("Couldn't parse pid")?,
         })
+    }
+}
+
+impl RunningProject {
+    pub fn stop(&self) -> Result<(), anyhow::Error> {
+        let signal = self.stop_signal.as_ref().unwrap_or(&Signal::SIGINT);
+        stop_pg(self.pid, signal).map_err(|_| anyhow!("Error trying to stop project"))
     }
 }
 
@@ -141,6 +162,10 @@ impl WorkerConfig {
         Ok(())
     }
 
+    pub fn is_running(&self, project: &Project) -> Result<bool, anyhow::Error> {
+        Ok(self.running()?.iter().any(|it| it.name == project.name))
+    }
+
     // Try to get vec of running projects. Try to remove the state file if the process is not running
     pub fn running(&self) -> Result<Vec<RunningProject>, anyhow::Error> {
         let projects = std::fs::read_dir(self.state_dir.as_path())?
@@ -158,6 +183,22 @@ impl WorkerConfig {
             .collect::<Vec<_>>();
 
         Ok(projects)
+    }
+
+    pub fn partition_projects(
+        &self,
+        projects: Vec<Project>,
+    ) -> Result<(Vec<RunningProject>, Vec<Project>), anyhow::Error> {
+        // Partition map to get project with pid set
+        let running_projects = self.running()?;
+        let (running, not_running): (Vec<_>, Vec<_>) = projects.into_iter().partition_map(|rp| {
+            match running_projects.iter().find(|p| p.name == rp.name) {
+                Some(p) => Either::Left(p.to_owned()),
+                None => Either::Right(rp),
+            }
+        });
+
+        Ok((running, not_running))
     }
 }
 
