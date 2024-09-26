@@ -17,20 +17,20 @@ use libc::{fork, setsid, waitpid, Fork};
 pub mod config;
 pub mod libc;
 
-fn logs(config: &WorkerConfig, log_args: LogsArgs) -> Result<(), anyhow::Error> {
-    if !config.is_running(&log_args.project)? {
-        return Err(anyhow!("{} is not running", log_args.project));
+fn logs(config: &WorkerConfig, args: LogsArgs) -> Result<(), anyhow::Error> {
+    if !config.is_running(&args.project)? {
+        return Err(anyhow!("{} is not running", args.project));
     }
 
     let mut cmd = std::process::Command::new("tail");
 
-    if log_args.follow {
+    if args.follow {
         cmd.arg("-f");
     }
 
     let mut child = cmd
-        .args(["-n", &log_args.number.to_string()])
-        .arg(config.log_file(&log_args.project))
+        .args(["-n", &args.number.to_string()])
+        .arg(config.log_file(&args.project))
         .spawn()?;
 
     child.wait()?;
@@ -38,9 +38,9 @@ fn logs(config: &WorkerConfig, log_args: LogsArgs) -> Result<(), anyhow::Error> 
     Ok(())
 }
 
-fn status(config: &WorkerConfig, status_args: StatusArgs) -> Result<(), anyhow::Error> {
+fn status(config: &WorkerConfig, args: StatusArgs) -> Result<(), anyhow::Error> {
     for project in config.running()? {
-        if status_args.quiet {
+        if args.quiet {
             println!("{}", project.name);
         } else {
             println!("{} is running", project);
@@ -148,9 +148,9 @@ fn restart(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::
     Ok(())
 }
 
-fn list(config: &WorkerConfig, list_args: ListArgs) -> Result<(), anyhow::Error> {
+fn list(config: &WorkerConfig, args: ListArgs) -> Result<(), anyhow::Error> {
     for p in config.projects.iter() {
-        if list_args.quiet {
+        if args.quiet {
             println!("{}", p.name)
         } else {
             println!("{}", p)
@@ -210,19 +210,19 @@ struct Cli {
 }
 
 fn main() -> Result<(), anyhow::Error> {
-    let args = Cli::parse();
+    let cli = Cli::parse();
 
     let config = WorkerConfig::new()?;
 
     let unique = |projects: Vec<Project>| projects.into_iter().unique().collect();
 
-    match args.subcommand {
+    match cli.subcommand {
         SubCommands::Start(args) => start(&config, unique(args.projects))?,
         SubCommands::Stop(args) => stop(&config, unique(args.projects))?,
         SubCommands::Restart(args) => restart(&config, unique(args.projects))?,
-        SubCommands::Logs(log_args) => logs(&config, log_args)?,
-        SubCommands::Status(status_args) => status(&config, status_args)?,
-        SubCommands::List(list_args) => list(&config, list_args)?,
+        SubCommands::Logs(args) => logs(&config, args)?,
+        SubCommands::Status(args) => status(&config, args)?,
+        SubCommands::List(args) => list(&config, args)?,
     }
 
     Ok(())
