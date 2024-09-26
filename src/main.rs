@@ -214,12 +214,12 @@ fn main() -> Result<(), anyhow::Error> {
 
     let config = WorkerConfig::new()?;
 
+    let unique = |projects: Vec<Project>| projects.into_iter().unique().collect();
+
     match args.subcommand {
-        SubCommands::Start(args) => start(&config, args.projects.into_iter().unique().collect())?,
-        SubCommands::Stop(args) => stop(&config, args.projects.into_iter().unique().collect())?,
-        SubCommands::Restart(args) => {
-            restart(&config, args.projects.into_iter().unique().collect())?
-        }
+        SubCommands::Start(args) => start(&config, unique(args.projects))?,
+        SubCommands::Stop(args) => stop(&config, unique(args.projects))?,
+        SubCommands::Restart(args) => restart(&config, unique(args.projects))?,
         SubCommands::Logs(log_args) => logs(&config, log_args)?,
         SubCommands::Status(status_args) => status(&config, status_args)?,
         SubCommands::List(list_args) => list(&config, list_args)?,
