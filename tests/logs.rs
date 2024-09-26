@@ -27,7 +27,7 @@ fn test_logs_success() {
 
         let output = &cmd.output().unwrap().stdout;
         let stdout = std::str::from_utf8(output).unwrap();
-        if stdout.contains("Hello from program started from worker!") {
+        if stdout.contains("Hello from mock!") {
             return;
         }
     }
