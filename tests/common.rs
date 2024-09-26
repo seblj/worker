@@ -17,7 +17,7 @@ pub enum WorkerTestProject {
 pub struct WorkerTestConfig {
     path: TempDir,
     projects: [String; 3],
-    unique_id: String,
+    names: [Uuid; 3],
 }
 
 impl Default for WorkerTestConfig {
@@ -28,15 +28,16 @@ impl Default for WorkerTestConfig {
 
 impl WorkerTestConfig {
     pub fn new() -> Self {
-        let unique_id = Uuid::new_v4().to_string();
-        let path = TempDir::with_prefix(&unique_id).unwrap();
+        let path = TempDir::with_prefix(Uuid::new_v4().to_string()).unwrap();
 
         let mock_worker_path = cargo_bin("mock_worker").to_string_lossy().to_string();
 
+        let names = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
+
         let projects = [
-            format!("{} 5 {}", mock_worker_path, unique_id),
-            format!("{} 6 {}", mock_worker_path, unique_id),
-            format!("{} 7 {}", mock_worker_path, unique_id),
+            format!("{} {}", mock_worker_path, names[0]),
+            format!("{} {}", mock_worker_path, names[1]),
+            format!("{} {}", mock_worker_path, names[2]),
         ];
 
         // Create the .worker.toml file
@@ -45,21 +46,21 @@ impl WorkerTestConfig {
             format!(
                 r#"
             [[project]]
-            name = "project-1-{unique_id}"
+            name = "{}"
             command = "{}"
             cwd = "/"
 
             [[project]]
-            name = "project-2-{unique_id}"
+            name = "{}"
             command = "{}"
             cwd = "/"
 
             [[project]]
-            name = "project-3-{unique_id}"
+            name = "{}"
             command = "{}"
             cwd = "/"
             "#,
-                projects[0], projects[1], projects[2],
+                names[0], projects[0], names[1], projects[1], names[2], projects[2],
             ),
         )
         .unwrap();
@@ -67,7 +68,7 @@ impl WorkerTestConfig {
         WorkerTestConfig {
             path,
             projects,
-            unique_id,
+            names,
         }
     }
 
@@ -126,9 +127,9 @@ impl WorkerTestConfig {
 
     pub fn project_name(&self, project: &WorkerTestProject) -> String {
         match project {
-            WorkerTestProject::One => format!("project-1-{}", self.unique_id),
-            WorkerTestProject::Two => format!("project-2-{}", self.unique_id),
-            WorkerTestProject::Three => format!("project-3-{}", self.unique_id),
+            WorkerTestProject::One => self.names[0].to_string(),
+            WorkerTestProject::Two => self.names[1].to_string(),
+            WorkerTestProject::Three => self.names[2].to_string(),
             WorkerTestProject::Unknown => "unknown".into(),
         }
     }
