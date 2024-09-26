@@ -172,7 +172,6 @@ impl WorkerConfig {
                     Some(project)
                 } else {
                     let _ = std::fs::remove_file(&path);
-                    let _ = std::fs::remove_file(self.log_dir.join(project.name));
                     None
                 }
             })

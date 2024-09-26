@@ -1,12 +1,10 @@
 use std::{
-    fs::File,
-    io::{BufRead, BufReader, Read},
+    fs::OpenOptions,
     os::{
         fd::{FromRawFd, IntoRawFd},
         unix::process::CommandExt,
     },
     process::Stdio,
-    thread::sleep,
     time::{Duration, Instant},
 };
 
@@ -19,32 +17,23 @@ use libc::{fork, setsid, waitpid, Fork};
 pub mod config;
 pub mod libc;
 
-// TODO: Should not read the entire file. Should only read last x lines or something
 fn logs(config: &WorkerConfig, log_args: LogsArgs) -> Result<(), anyhow::Error> {
     if !config.is_running(&log_args.project)? {
         return Err(anyhow!("{} is not running", log_args.project));
     }
 
-    let log_file = config.log_file(&log_args.project);
-    let file = File::open(log_file).expect("Log file should exist");
-
-    let mut reader = BufReader::new(file);
-    let mut buffer = String::new();
+    let mut cmd = std::process::Command::new("tail");
 
     if log_args.follow {
-        loop {
-            match reader.read_line(&mut buffer)? {
-                0 => sleep(Duration::from_secs(1)),
-                _ => {
-                    print!("{}", buffer);
-                    buffer.clear();
-                }
-            }
-        }
-    } else {
-        reader.read_to_string(&mut buffer)?;
-        println!("{}", buffer);
+        cmd.arg("-f");
     }
+
+    let mut child = cmd
+        .args(["-n", &log_args.number.to_string()])
+        .arg(config.log_file(&log_args.project))
+        .spawn()?;
+
+    child.wait()?;
 
     Ok(())
 }
@@ -117,11 +106,13 @@ fn start(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Er
                 match fork().expect("Couldn't fork inner") {
                     Fork::Parent(_) => std::process::exit(0),
                     Fork::Child => {
-                        let tmp_file = config.log_file(&project);
-                        let f = File::create(tmp_file)?;
-
                         // Create a raw filedescriptor to use to merge stdout and stderr
-                        let fd = f.into_raw_fd();
+                        let fd = OpenOptions::new()
+                            .write(true)
+                            .truncate(true)
+                            .create(true)
+                            .open(config.log_file(&project))?
+                            .into_raw_fd();
 
                         let parts = shlex::split(&project.command)
                             .context(format!("Couldn't parse command: {}", project.command))?;
@@ -179,6 +170,9 @@ struct LogsArgs {
     project: Project,
     #[arg(short, long)]
     follow: bool,
+
+    #[arg(short, long = "lines", default_value = "10")]
+    number: i32,
 }
 
 #[derive(Debug, Parser)]
@@ -202,7 +196,6 @@ enum SubCommands {
     /// Restart the specified project(s). E.g. `worker restart foo bar` (Same as running stop and then start)
     Restart(ActionArgs),
     /// Print out logs for the specified project.
-    /// Additionally accepts `-f` to follow the log. E.g. `worker logs foo`
     Logs(LogsArgs),
     /// Print out a status of which projects is running
     Status(StatusArgs),
