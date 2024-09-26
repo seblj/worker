@@ -30,14 +30,14 @@ impl WorkerTestConfig {
     pub fn new() -> Self {
         let path = TempDir::with_prefix(Uuid::new_v4().to_string()).unwrap();
 
-        let mock_worker_path = cargo_bin("mock_worker").to_string_lossy().to_string();
+        let mock_path = cargo_bin("mock").to_string_lossy().to_string();
 
         let names = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
 
         let projects = [
-            format!("{} {}", mock_worker_path, names[0]),
-            format!("{} {}", mock_worker_path, names[1]),
-            format!("{} {}", mock_worker_path, names[2]),
+            format!("{} {}", mock_path, names[0]),
+            format!("{} {}", mock_path, names[1]),
+            format!("{} {}", mock_path, names[2]),
         ];
 
         // Create the .worker.toml file
