@@ -65,24 +65,16 @@ fn stop(config: &WorkerConfig, projects: Vec<Project>) -> Result<(), anyhow::Err
     let start = Instant::now();
 
     while Instant::now().duration_since(start) < timeout {
-        // Get all running projects and filter them on projects we are trying to stop.
-        // If some of them are still running, we should print out a message that we failed to stop them
-        let num_running = config
-            .running()?
-            .iter()
-            .filter(|rp| running.contains(rp))
-            .count();
-
-        if num_running == 0 {
+        let (still_running, _) = config.partition_projects(running.clone())?;
+        if still_running.is_empty() {
             return Ok(());
         }
     }
 
-    config.running()?.iter().for_each(|rp| {
-        if running.iter().any(|p| rp.name == p.name) {
-            eprintln!("Was not able to stop {}", rp);
-        }
-    });
+    let (still_running, _) = config.partition_projects(running)?;
+    for p in still_running {
+        eprintln!("Was not able to stop {}", p);
+    }
 
     Ok(())
 }

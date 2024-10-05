@@ -13,6 +13,10 @@ pub struct Config {
     pub project: Vec<Project>,
 }
 
+pub trait WorkerProject {
+    fn name(&self) -> &str;
+}
+
 /// Project deserialized from config file
 #[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub struct Project {
@@ -56,8 +60,21 @@ macro_rules! impl_display {
     };
 }
 
+macro_rules! impl_worker_project {
+    ($project:tt) => {
+        impl WorkerProject for $project {
+            fn name(&self) -> &str {
+                &self.name
+            }
+        }
+    };
+}
+
 impl_display!(Project);
 impl_display!(RunningProject);
+
+impl_worker_project!(Project);
+impl_worker_project!(RunningProject);
 
 fn find_project(name: &str) -> Result<Project, anyhow::Error> {
     let config = WorkerConfig::new()?;
@@ -180,16 +197,19 @@ impl WorkerConfig {
         Ok(projects)
     }
 
-    pub fn partition_projects(
+    pub fn partition_projects<T>(
         &self,
-        projects: Vec<Project>,
-    ) -> Result<(Vec<RunningProject>, Vec<Project>), anyhow::Error> {
+        projects: Vec<T>,
+    ) -> Result<(Vec<RunningProject>, Vec<Project>), anyhow::Error>
+    where
+        T: WorkerProject + Into<Project>,
+    {
         // Partition map to get project with pid set
         let running_projects = self.running()?;
         let (running, not_running): (Vec<_>, Vec<_>) = projects.into_iter().partition_map(|rp| {
-            match running_projects.iter().find(|p| p.name == rp.name) {
+            match running_projects.iter().find(|p| p.name == rp.name()) {
                 Some(p) => Either::Left(p.to_owned()),
-                None => Either::Right(rp),
+                None => Either::Right(rp.into()),
             }
         });
 
