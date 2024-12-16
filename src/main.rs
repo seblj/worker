@@ -163,7 +163,7 @@ struct LogsArgs {
     #[arg(short, long)]
     follow: bool,
 
-    #[arg(short, long = "lines", default_value = "10")]
+    #[arg(short, long = "lines", default_value = "50")]
     number: i32,
 }
 
