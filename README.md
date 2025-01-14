@@ -35,12 +35,14 @@ command = "trunk --color always serve"
 cwd = "/Users/sebastian/projects/foodie/frontend"
 envs = { CARGO_TERM_COLOR = "always" }
 display = "Foodie Frontend"
+group = [ "foodie" ]
 
 [[project]]
 name = "backend"
 command = "cargo watch -x 'run --color always'"
 cwd = "/Users/sebastian/projects/foodie/backend"
 display = "Foodie Backend"
+group = [ "foodie" ]
 ```
 
 ## How to run
@@ -60,3 +62,6 @@ Commands:
 Options:
   -h, --help  Print help
 ```
+
+For the commands that accepts multiple args, you can use both `name` and `group` as an arg. If using `group`, it will start/stop/restart
+all the projects within the same group (for example `worker start foodie` is the same as `worker start frontend backend`)

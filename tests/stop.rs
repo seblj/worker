@@ -110,3 +110,75 @@ fn test_stop_multiple_one_already_stopped() {
     assert!(worker.state_file(project3).is_none());
     assert_eq!(worker.pids(project3).len(), 0);
 }
+
+#[test]
+fn test_stop_group_success() {
+    let worker = WorkerTestConfig::new();
+    let group1 = WorkerTestProject::GroupOne;
+
+    // Start the project
+    let mut cmd = worker.start(&[group1]);
+    cmd.assert().success();
+
+    let mut cmd = worker.stop(&[group1]);
+    cmd.assert().success();
+
+    let projects = worker.group_projects(&group1);
+
+    // Verify that the state file exists
+    assert!(worker.state_file(projects[0]).is_none());
+    assert!(worker.state_file(projects[1]).is_none());
+    assert_eq!(worker.pids(projects[0]).len(), 0);
+    assert_eq!(worker.pids(projects[1]).len(), 0);
+}
+
+#[test]
+fn test_stop_multiple_groups_success() {
+    let worker = WorkerTestConfig::new();
+    let group1 = WorkerTestProject::GroupOne;
+    let group2 = WorkerTestProject::GroupTwo;
+
+    // Start the project
+    let mut cmd = worker.start(&[group1, group2]);
+    cmd.assert().success();
+
+    let mut cmd = worker.stop(&[group1, group2]);
+    cmd.assert().success();
+
+    let projects1 = worker.group_projects(&group1);
+    let projects2 = worker.group_projects(&group2);
+
+    // Verify that the state file exists
+    assert!(worker.state_file(projects1[0]).is_none());
+    assert!(worker.state_file(projects1[1]).is_none());
+    assert!(worker.state_file(projects2[0]).is_none());
+    assert!(worker.state_file(projects2[1]).is_none());
+    assert_eq!(worker.pids(projects1[0]).len(), 0);
+    assert_eq!(worker.pids(projects1[1]).len(), 0);
+    assert_eq!(worker.pids(projects2[0]).len(), 0);
+    assert_eq!(worker.pids(projects2[1]).len(), 0);
+}
+
+#[test]
+fn test_stop_groups_and_project_success() {
+    let worker = WorkerTestConfig::new();
+    let group1 = WorkerTestProject::GroupOne;
+    let project3 = WorkerTestProject::Three;
+
+    // Start the project
+    let mut cmd = worker.start(&[group1, project3]);
+    cmd.assert().success();
+
+    let mut cmd = worker.stop(&[group1, project3]);
+    cmd.assert().success();
+
+    let projects1 = worker.group_projects(&group1);
+
+    // Verify that the state file exists
+    assert!(worker.state_file(projects1[0]).is_none());
+    assert!(worker.state_file(projects1[1]).is_none());
+    assert!(worker.state_file(project3).is_none());
+    assert_eq!(worker.pids(projects1[0]).len(), 0);
+    assert_eq!(worker.pids(projects1[1]).len(), 0);
+    assert_eq!(worker.pids(project3).len(), 0);
+}

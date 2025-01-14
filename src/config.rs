@@ -4,7 +4,10 @@ use anyhow::{anyhow, Context};
 use itertools::{Either, Itertools};
 use serde::{Deserialize, Serialize};
 
-use crate::libc::{has_processes_running, stop_pg, Signal};
+use crate::{
+    libc::{has_processes_running, stop_pg, Signal},
+    ActionArg,
+};
 
 const CONFIG_FILE: &str = ".worker.toml";
 
@@ -26,6 +29,7 @@ pub struct Project {
     pub display: Option<String>,
     pub stop_signal: Option<Signal>,
     pub envs: Option<HashMap<String, String>>,
+    pub group: Option<Vec<String>>,
 }
 
 /// Project with process id
@@ -37,6 +41,7 @@ pub struct RunningProject {
     pub display: Option<String>,
     pub stop_signal: Option<Signal>,
     pub envs: Option<HashMap<String, String>>,
+    pub group: Option<Vec<String>>,
     pub pid: i32,
 }
 
@@ -96,6 +101,48 @@ impl From<RunningProject> for Project {
             display: value.display,
             stop_signal: value.stop_signal,
             envs: value.envs,
+            group: value.group,
+        }
+    }
+}
+
+impl FromStr for ActionArg {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let config = WorkerConfig::new()?;
+
+        let projects_in_group: Vec<_> = config
+            .projects
+            .clone()
+            .into_iter()
+            .filter(|it| {
+                it.group
+                    .as_ref()
+                    .is_some_and(|group| group.contains(&s.to_string()))
+            })
+            .collect();
+
+        if !projects_in_group.is_empty() {
+            Ok(ActionArg::Group(projects_in_group))
+        } else if let Some(project) = config.projects.iter().find(|it| it.name == s) {
+            Ok(ActionArg::Project(project.clone()))
+        } else {
+            let project_names: Vec<String> =
+                config.projects.iter().map(|p| p.name.clone()).collect();
+
+            let group_names: Vec<_> = config
+                .projects
+                .iter()
+                .filter_map(|it| it.group.clone())
+                .flatten()
+                .unique()
+                .collect();
+
+            Err(anyhow!(
+                "\nValid projects are {:#?}\n\nValid groups are {:#?}",
+                project_names,
+                group_names
+            ))
         }
     }
 }
@@ -122,6 +169,7 @@ impl FromStr for RunningProject {
             display: project.display,
             stop_signal: project.stop_signal,
             envs: project.envs,
+            group: project.group,
             pid: pid.parse().context("Couldn't parse pid")?,
         })
     }

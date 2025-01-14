@@ -6,18 +6,44 @@ use sysinfo::{Pid, System};
 use tempfile::TempDir;
 use uuid::Uuid;
 
+pub enum WorkerTestArg {
+    Project(WorkerTestProject),
+    Group(WorkerTestGroup),
+}
+
 #[derive(Clone, Copy)]
 pub enum WorkerTestProject {
     One,
     Two,
     Three,
+    GroupOne,
+    GroupTwo,
     Unknown,
+}
+
+#[derive(Clone, Copy)]
+pub enum WorkerTestGroup {
+    One,
+    Two,
+}
+
+impl From<WorkerTestGroup> for WorkerTestArg {
+    fn from(val: WorkerTestGroup) -> Self {
+        WorkerTestArg::Group(val)
+    }
+}
+
+impl From<WorkerTestProject> for WorkerTestArg {
+    fn from(val: WorkerTestProject) -> Self {
+        WorkerTestArg::Project(val)
+    }
 }
 
 pub struct WorkerTestConfig {
     path: TempDir,
-    projects: [String; 3],
-    names: [Uuid; 3],
+    projects: [String; 4],
+    names: [Uuid; 4],
+    groups: [Uuid; 2],
 }
 
 impl Default for WorkerTestConfig {
@@ -32,12 +58,20 @@ impl WorkerTestConfig {
 
         let mock_path = cargo_bin("mock").to_string_lossy().to_string();
 
-        let names = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
+        let names = [
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        ];
+
+        let groups = [Uuid::new_v4(), Uuid::new_v4()];
 
         let projects = [
             format!("{} {}", mock_path, names[0]),
             format!("{} {}", mock_path, names[1]),
             format!("{} {}", mock_path, names[2]),
+            format!("{} {}", mock_path, names[3]),
         ];
 
         // Create the .worker.toml file
@@ -49,18 +83,37 @@ impl WorkerTestConfig {
             name = "{}"
             command = "{}"
             cwd = "/"
+            group = [ "{}", "{}" ]
 
             [[project]]
             name = "{}"
             command = "{}"
             cwd = "/"
+            group = [ "{}" ]
+
+            [[project]]
+            name = "{}"
+            command = "{}"
+            cwd = "/"
+            group = [ "{}" ]
 
             [[project]]
             name = "{}"
             command = "{}"
             cwd = "/"
             "#,
-                names[0], projects[0], names[1], projects[1], names[2], projects[2],
+                names[0],
+                projects[0],
+                groups[0],
+                groups[1],
+                names[1],
+                projects[1],
+                groups[0],
+                names[2],
+                projects[2],
+                groups[1],
+                names[3],
+                projects[3],
             ),
         )
         .unwrap();
@@ -69,12 +122,14 @@ impl WorkerTestConfig {
             path,
             projects,
             names,
+            groups,
         }
     }
 
     fn run(&self, command: &str, projects: Option<&[WorkerTestProject]>) -> Command {
         let mut cmd = Command::cargo_bin("worker").unwrap();
         cmd.current_dir(&self.path).arg(command);
+        println!("{}", self.path.path().display());
 
         if let Some(projects) = projects {
             let projects = projects
@@ -91,8 +146,8 @@ impl WorkerTestConfig {
         self.run("start", Some(projects))
     }
 
-    pub fn logs(&self, projects: WorkerTestProject) -> Command {
-        self.run("logs", Some(&[projects]))
+    pub fn logs(&self, project: WorkerTestProject) -> Command {
+        self.run("logs", Some(&[project]))
     }
 
     pub fn restart(&self, projects: &[WorkerTestProject]) -> Command {
@@ -109,6 +164,18 @@ impl WorkerTestConfig {
 
     pub fn status(&self) -> Command {
         self.run("status", None)
+    }
+
+    // Depends on `new()`. Used for asserting that the projects have actually started
+    pub fn group_projects(&self, group: &WorkerTestProject) -> &[WorkerTestProject; 2] {
+        match group {
+            WorkerTestProject::GroupOne => &[WorkerTestProject::One, WorkerTestProject::Two],
+            WorkerTestProject::GroupTwo => &[WorkerTestProject::Two, WorkerTestProject::Three],
+            WorkerTestProject::One => unreachable!(),
+            WorkerTestProject::Two => unreachable!(),
+            WorkerTestProject::Three => unreachable!(),
+            WorkerTestProject::Unknown => unreachable!(),
+        }
     }
 
     pub fn state_file(&self, project: WorkerTestProject) -> Option<DirEntry> {
@@ -131,6 +198,8 @@ impl WorkerTestConfig {
             WorkerTestProject::Two => self.names[1].to_string(),
             WorkerTestProject::Three => self.names[2].to_string(),
             WorkerTestProject::Unknown => "unknown".into(),
+            WorkerTestProject::GroupOne => self.groups[0].to_string(),
+            WorkerTestProject::GroupTwo => self.groups[1].to_string(),
         }
     }
 
@@ -141,6 +210,8 @@ impl WorkerTestConfig {
             WorkerTestProject::Two => self.projects[1].split_whitespace(),
             WorkerTestProject::Three => self.projects[2].split_whitespace(),
             WorkerTestProject::Unknown => unreachable!(),
+            WorkerTestProject::GroupOne => unreachable!(),
+            WorkerTestProject::GroupTwo => unreachable!(),
         }
         .collect::<Vec<_>>();
 

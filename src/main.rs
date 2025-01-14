@@ -152,9 +152,15 @@ fn list(config: &WorkerConfig, args: ListArgs) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ActionArg {
+    Project(Project),
+    Group(Vec<Project>),
+}
+
 #[derive(Debug, Parser)]
 struct ActionArgs {
-    projects: Vec<Project>,
+    projects: Vec<ActionArg>,
 }
 
 #[derive(Debug, Parser)]
@@ -206,7 +212,16 @@ fn main() -> Result<(), anyhow::Error> {
 
     let config = WorkerConfig::new()?;
 
-    let unique = |projects: Vec<Project>| projects.into_iter().unique().collect();
+    let unique = |projects: Vec<ActionArg>| {
+        projects
+            .into_iter()
+            .flat_map(|it| match it {
+                ActionArg::Project(project) => vec![project],
+                ActionArg::Group(vec) => vec,
+            })
+            .unique()
+            .collect()
+    };
 
     match cli.subcommand {
         SubCommands::Start(args) => start(&config, unique(args.projects))?,
