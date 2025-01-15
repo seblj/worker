@@ -6,11 +6,6 @@ use sysinfo::{Pid, System};
 use tempfile::TempDir;
 use uuid::Uuid;
 
-pub enum WorkerTestArg {
-    Project(WorkerTestProject),
-    Group(WorkerTestGroup),
-}
-
 #[derive(Clone, Copy)]
 pub enum WorkerTestProject {
     One,
@@ -25,18 +20,6 @@ pub enum WorkerTestProject {
 pub enum WorkerTestGroup {
     One,
     Two,
-}
-
-impl From<WorkerTestGroup> for WorkerTestArg {
-    fn from(val: WorkerTestGroup) -> Self {
-        WorkerTestArg::Group(val)
-    }
-}
-
-impl From<WorkerTestProject> for WorkerTestArg {
-    fn from(val: WorkerTestProject) -> Self {
-        WorkerTestArg::Project(val)
-    }
 }
 
 pub struct WorkerTestConfig {
