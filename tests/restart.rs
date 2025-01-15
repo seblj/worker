@@ -163,7 +163,6 @@ fn test_restart_group_one_project_running() {
 
     // Verify that the state file exists
     assert!(worker.state_file(projects[0]).is_some());
-    assert!(worker.state_file(projects[0]).is_some());
 
     let new_pid1 = worker.pids(projects[0])[0];
     assert_ne!(pid1, new_pid1);

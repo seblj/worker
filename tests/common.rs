@@ -23,8 +23,8 @@ pub enum WorkerTestGroup {
 }
 
 pub struct WorkerTestConfig {
-    path: TempDir,
-    projects: [String; 4],
+    dir: TempDir,
+    cmds: [String; 4],
     names: [Uuid; 4],
     groups: [Uuid; 2],
 }
@@ -37,82 +37,66 @@ impl Default for WorkerTestConfig {
 
 impl WorkerTestConfig {
     pub fn new() -> Self {
-        let path = TempDir::with_prefix(Uuid::new_v4().to_string()).unwrap();
+        let dir = TempDir::with_prefix(Uuid::new_v4().to_string()).unwrap();
 
         let mock_path = cargo_bin("mock").to_string_lossy().to_string();
 
-        let names = [
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-        ];
+        let name1 = Uuid::new_v4();
+        let name2 = Uuid::new_v4();
+        let name3 = Uuid::new_v4();
+        let name4 = Uuid::new_v4();
 
-        let groups = [Uuid::new_v4(), Uuid::new_v4()];
+        let group1 = Uuid::new_v4();
+        let group2 = Uuid::new_v4();
 
-        let projects = [
-            format!("{} {}", mock_path, names[0]),
-            format!("{} {}", mock_path, names[1]),
-            format!("{} {}", mock_path, names[2]),
-            format!("{} {}", mock_path, names[3]),
-        ];
+        let cmd1 = format!("{} {}", mock_path, name1);
+        let cmd2 = format!("{} {}", mock_path, name2);
+        let cmd3 = format!("{} {}", mock_path, name3);
+        let cmd4 = format!("{} {}", mock_path, name4);
 
         // Create the .worker.toml file
         std::fs::write(
-            path.path().join(".worker.toml"),
+            dir.path().join(".worker.toml"),
             format!(
                 r#"
             [[project]]
-            name = "{}"
-            command = "{}"
+            name = "{name1}"
+            command = "{cmd1}"
             cwd = "/"
-            group = [ "{}", "{}" ]
+            group = [ "{group1}", "{group2}" ]
 
             [[project]]
-            name = "{}"
-            command = "{}"
+            name = "{name2}"
+            command = "{cmd2}"
             cwd = "/"
-            group = [ "{}" ]
+            group = [ "{group1}" ]
 
             [[project]]
-            name = "{}"
-            command = "{}"
+            name = "{name3}"
+            command = "{cmd3}"
             cwd = "/"
-            group = [ "{}" ]
+            group = [ "{group2}" ]
 
             [[project]]
-            name = "{}"
-            command = "{}"
+            name = "{name4}"
+            command = "{cmd4}"
             cwd = "/"
-            "#,
-                names[0],
-                projects[0],
-                groups[0],
-                groups[1],
-                names[1],
-                projects[1],
-                groups[0],
-                names[2],
-                projects[2],
-                groups[1],
-                names[3],
-                projects[3],
+            "#
             ),
         )
         .unwrap();
 
         WorkerTestConfig {
-            path,
-            projects,
-            names,
-            groups,
+            dir,
+            cmds: [cmd1, cmd2, cmd3, cmd4],
+            names: [name1, name2, name3, name4],
+            groups: [group1, group2],
         }
     }
 
     fn run(&self, command: &str, projects: Option<&[WorkerTestProject]>) -> Command {
         let mut cmd = Command::cargo_bin("worker").unwrap();
-        cmd.current_dir(&self.path).arg(command);
-        println!("{}", self.path.path().display());
+        cmd.current_dir(&self.dir).arg(command);
 
         if let Some(projects) = projects {
             let projects = projects
@@ -162,7 +146,7 @@ impl WorkerTestConfig {
     }
 
     pub fn state_file(&self, project: WorkerTestProject) -> Option<DirEntry> {
-        let dir = self.path.path().join(".worker/state").read_dir().unwrap();
+        let dir = self.dir.path().join(".worker/state").read_dir().unwrap();
 
         for entry in dir.into_iter() {
             let entry = entry.unwrap();
@@ -189,9 +173,9 @@ impl WorkerTestConfig {
     pub fn pids(&self, project: WorkerTestProject) -> Vec<Pid> {
         // Verify that the process is running using sysinfo
         let cmd = match project {
-            WorkerTestProject::One => self.projects[0].split_whitespace(),
-            WorkerTestProject::Two => self.projects[1].split_whitespace(),
-            WorkerTestProject::Three => self.projects[2].split_whitespace(),
+            WorkerTestProject::One => self.cmds[0].split_whitespace(),
+            WorkerTestProject::Two => self.cmds[1].split_whitespace(),
+            WorkerTestProject::Three => self.cmds[2].split_whitespace(),
             WorkerTestProject::Unknown => unreachable!(),
             WorkerTestProject::GroupOne => unreachable!(),
             WorkerTestProject::GroupTwo => unreachable!(),
